@@ -1,0 +1,40 @@
+/* Reset some default browser styles */
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+/* Set a default font and background color */
+body {
+	font-family: Arial, sans-serif;
+	background-color: #f4f4f4;
+	color: #333;
+	line-height: 1.6;
+}
+
+/* Style for headings */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	margin-bottom: 1rem;
+	font-weight: bold;
+}
+
+/* Style for paragraphs */
+p {
+	margin-bottom: 1rem;
+}
+
+/* Default link styles */
+a {
+	color: #007bff;
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
