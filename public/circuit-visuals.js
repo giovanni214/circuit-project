@@ -258,7 +258,7 @@ class CircuitShape extends Shape {
 			// The circuit's right edge is at (this.worldX + this.size/2)
 			// so we add half the input circle's diameter.
 			const cx = this.worldX + this.size / 2 + outputDiameterWorld / 2;
-
+ 
 			// Create an InputShape with these world coordinates and the determined diameter,
 			// or update its position if already created.
 			if (this.outputShapes.length !== numOutputs) {
@@ -368,6 +368,7 @@ function setup() {
 	);
 
 	shapes.push(new CircuitShape(width / 2, height / 2, 200, twoOutputGate.clone()));
+	shapes.push(new CircuitShape(width / 2 - 250, height / 2, 200, twoOutputGate.clone()));
 	// shapes.push(new Square(200, 150, 100));
 }
 
