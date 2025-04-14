@@ -204,7 +204,6 @@ class CircuitShape extends Shape {
 	 * @param {number} x - World x-coordinate for the circuit's center.
 	 * @param {number} y - World y-coordinate for the circuit's center.
 	 * @param {number} size - World size (side length) of the circuit's square.
-	 * @param {Circuit} gate - The gate used by this circuit shape (must have an inputLength property).
 	 */
 	constructor(x, y, size, gate) {
 		super(x, y, size);
@@ -258,7 +257,7 @@ class CircuitShape extends Shape {
 			// The circuit's right edge is at (this.worldX + this.size/2)
 			// so we add half the input circle's diameter.
 			const cx = this.worldX + this.size / 2 + outputDiameterWorld / 2;
- 
+
 			// Create an InputShape with these world coordinates and the determined diameter,
 			// or update its position if already created.
 			if (this.outputShapes.length !== numOutputs) {
@@ -270,14 +269,15 @@ class CircuitShape extends Shape {
 		}
 	}
 
-  updateOutputs() {
-    const inputs = this.inputShapes.map((shape => shape.value));
-    const outputs = this.gate.tick(inputs);
-    
-    this.outputShapes.forEach((outputShape, i) => {
-      outputShape.value = outputs[i];
-    })
-  }
+	updateOutputs() {
+		const inputs = this.inputShapes.map((shape) => shape.value);
+    console.log(this.gate);
+		const outputs = this.gate.tick(inputs);
+
+		this.outputShapes.forEach((outputShape, i) => {
+			outputShape.value = outputs[i];
+		});
+	}
 
 	/**
 	 * Draws the circuit shape and its input shapes.
@@ -333,42 +333,8 @@ function setup() {
 	createCanvas(500, 500);
 	rectMode(CENTER);
 
-	// const testGate = new Circuit("OR");
-	// const orAST = Circuit.createGateNode(
-	// 	"OR",
-	// 	Circuit.createInputNode(0),
-	// 	Circuit.createInputNode(1),
-	// 	Circuit.createInputNode(2),
-	// 	Circuit.createInputNode(3)
-	// );
-	// testGate.registerGate("OR", OR_GATE_FUNC);
-	// testGate.setAST(orAST);
-
-  const AND_GATE_FUNC = (a, b) => a && b;
-  const OR_GATE_FUNC = (a, b) => a || b;
-
-	const twoOutputGate = Circuit.createCompositeGate(
-		"AndOrGate",
-		() => {
-			// Create input nodes for A and B.
-			const A = Circuit.createInputNode(0);
-			const B = Circuit.createInputNode(1);
-			// Create AST nodes for the two outputs.
-			// First output: AND(A, B)
-			const andNode = Circuit.createGateNode("AND", A, B);
-			// Second output: OR(A, B)
-			const orNode = Circuit.createGateNode("OR", A, B);
-			// Return an array containing both output nodes.
-			return [andNode, orNode];
-		},
-		[
-			{ gateName: "AND", func: AND_GATE_FUNC },
-			{ gateName: "OR", func: OR_GATE_FUNC }
-		]
-	);
-
-	shapes.push(new CircuitShape(width / 2, height / 2, 200, twoOutputGate.clone()));
-	shapes.push(new CircuitShape(width / 2 - 250, height / 2, 200, twoOutputGate.clone()));
+	shapes.push(new CircuitShape(width / 2, height / 2, 200, dflipflop.clone()));
+	shapes.push(new CircuitShape(width / 2 - 250, height / 2, 200, dflipflop.clone()));
 	// shapes.push(new Square(200, 150, 100));
 }
 
@@ -394,8 +360,9 @@ function draw() {
 	fill(0);
 	textSize(16);
 	textAlign(LEFT, CENTER);
-	text(`Zoom: ${floor(zoomLevel * 100)}% Clock Cycles: ${shapes[0].gate.totalTicks}`, 10, height - 10);
+	text(`EDGE: ${shapes[0].gate.getEdgeTrigger()}`, 10, height - 30);
 
+	text(`Zoom: ${floor(zoomLevel * 100)}% Clock: ${shapes[0].gate.clock}`, 10, height - 10);
 	drawMinimap();
 }
 
@@ -617,9 +584,17 @@ function mouseReleased() {
 }
 
 function keyPressed() {
-  if(key === " ") {
-    shapes[0].updateOutputs();
-  }
+	if (key === " ") {
+		shapes[0].updateOutputs();
+	}
+
+	if (key === "ArrowUp") {
+		shapes[0].gate.setClock(1);
+	}
+
+	if (key === "ArrowDown") {
+		shapes[0].gate.setClock(0);
+	}
 }
 
 // Zoom functionality with limits.

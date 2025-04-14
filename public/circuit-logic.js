@@ -1,238 +1,434 @@
 // ===========================
-// AST Node Definitions (Array-Based)
+// 1) Event Scheduler
+// ===========================
+class Scheduler {
+  constructor() {
+    this.events = [];
+  }
+
+  /**
+   * scheduleEvent: queue a callback to run at targetTick
+   */
+  scheduleEvent(targetTick, callback) {
+    this.events.push({ targetTick, callback });
+  }
+
+  /**
+   * consumeEventsForTick: remove and return all events for a given tick
+   */
+  consumeEventsForTick(tick) {
+    const ready = this.events.filter((e) => e.targetTick === tick);
+    this.events = this.events.filter((e) => e.targetTick !== tick);
+    return ready;
+  }
+
+  /**
+   * hasEventsForTick: does at least one event remain for this tick?
+   */
+  hasEventsForTick(tick) {
+    return this.events.some((e) => e.targetTick === tick);
+  }
+}
+
+// ===========================
+// 2) AST Node Definitions
 // ===========================
 
-// Base Node – every node implements evaluate(circuit, inputs)
 class Node {
-	evaluate(circuit, inputs) {
-		throw new Error("Evaluate not implemented");
-	}
+  evaluate(circuit, inputs) {
+    throw new Error("evaluate() not implemented for base Node.");
+  }
 }
 
-// LiteralNode returns a fixed binary value (0 or 1).
+/**
+ * LiteralNode: always returns a fixed 0 or 1
+ */
 class LiteralNode extends Node {
-	constructor(value) {
-		super();
-		this.value = value;
-	}
-	evaluate(circuit, inputs) {
-		return this.value;
-	}
+  constructor(value) {
+    super();
+    this.value = value;
+  }
+  evaluate(circuit, inputs) {
+    return this.value;
+  }
 }
 
-// InputNode retrieves a value from the input array by its index.
+/**
+ * InputNode: returns inputs[this.index] or 0 if not defined
+ */
 class InputNode extends Node {
-	constructor(index) {
-		super();
-		this.index = index;
-	}
-	evaluate(circuit, inputs) {
-		return inputs[this.index] !== undefined ? inputs[this.index] : 0;
-	}
+  constructor(index) {
+    super();
+    this.index = index;
+  }
+  evaluate(circuit, inputs) {
+    return inputs[this.index] ?? 0;
+  }
 }
 
-// ClockNode reads the clock value from the Circuit.
+/**
+ * ClockNode: returns circuit.clock
+ */
 class ClockNode extends Node {
-	evaluate(circuit, inputs) {
-		return circuit.clock;
-	}
+  evaluate(circuit, inputs) {
+    return circuit.clock;
+  }
 }
 
-// GateNode collects its child nodes’ evaluations (as an array)
-// and calls the registered gate function with that array.
+/**
+ * GateNode: applies a registered gate function to child node outputs.
+ * Optional "delay" => schedules updates for future ticks.
+ */
 class GateNode extends Node {
-	constructor(gateType, inputNodes) {
-		super();
-		this.gateType = gateType;
-		this.inputNodes = inputNodes; // array of Node instances
-	}
+  constructor(gateType, inputNodes, delay = 0) {
+    super();
+    this.gateType = gateType;
+    this.inputNodes = inputNodes;
+    this.delay = delay;
 
-	evaluate(circuit, inputs) {
-		const evaluatedInputs = this.inputNodes.map((node) => node.evaluate(circuit, inputs));
-		const gateFunc = circuit.getGate(this.gateType);
-		if (typeof gateFunc !== "function") {
-			throw new Error(`Gate "${this.gateType}" is not registered.`);
-		}
-		return gateFunc(evaluatedInputs, circuit);
-	}
+    // lastValue holds the gate's visible output if there's a delay
+    this.lastValue = 0;
+  }
+
+  evaluate(circuit, inputs) {
+    // find the gate function
+    const gateFunc = circuit.getGate(this.gateType);
+    if (typeof gateFunc !== "function") {
+      throw new Error(`Gate "${this.gateType}" is not registered.`);
+    }
+    // evaluate child nodes
+    const childVals = this.inputNodes.map((n) => n.evaluate(circuit, inputs));
+    const newValue = gateFunc(childVals);
+
+    // if delayed, schedule the update
+    if (this.delay > 0) {
+      const targetTick = circuit.currentTick + this.delay;
+      circuit.scheduler.scheduleEvent(targetTick, () => {
+        this.lastValue = newValue;
+      });
+      return this.lastValue; // until it fires
+    } else {
+      // immediate update
+      this.lastValue = newValue;
+      return newValue;
+    }
+  }
 }
 
-// FeedbackNode holds a value (for example, a latch state).
-// When evaluated, it returns its stored value.
-// Later, its computeFeedback() method computes a new value (based on the current state)
-// and update() sets its stored value to that newly computed value.
+/**
+ * FeedbackNode: stores a "currentValue" that is updated
+ * by computeFeedback() once per evaluate cycle (possibly delayed).
+ */
 class FeedbackNode extends Node {
-	constructor(inputNode, initialValue = 0) {
-		super();
-		this.inputNode = inputNode; // Driving expression node.
-		this.currentValue = initialValue; // Stored value.
-	}
-	evaluate(circuit, inputs) {
-		return this.currentValue;
-	}
-	computeFeedback(circuit, inputs) {
-		// Compute new value based on current state of the circuit.
-		this.currentValue = this.inputNode.evaluate(circuit, inputs);
-	}
+  constructor(inputNode, initialValue = 0, delay = 0) {
+    super();
+    this.inputNode = inputNode;
+    this.currentValue = initialValue;
+    this.delay = delay;
+  }
+
+  evaluate(circuit, inputs) {
+    return this.currentValue;
+  }
+
+  computeFeedback(circuit, inputs) {
+    const newValue = this.inputNode
+      ? this.inputNode.evaluate(circuit, inputs)
+      : 0;
+    if (this.delay > 0) {
+      const targetTick = circuit.currentTick + this.delay;
+      circuit.scheduler.scheduleEvent(targetTick, () => {
+        this.currentValue = newValue;
+      });
+    } else {
+      this.currentValue = newValue;
+    }
+  }
 }
 
 // ===========================
-// Helper Function: Array Equality Checker
+// 3) Utility: arraysEqual
 // ===========================
-function arraysEqual(arr1, arr2) {
-	if (arr1.length !== arr2.length) return false;
-	for (let i = 0; i < arr1.length; i++) {
-		if (arr1[i] !== arr2[i]) return false;
-	}
-	return true;
+function arraysEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 // ===========================
-// Circuit Class with Updated evaluate(), evaluateUntilStable(), and tick()
+// 4) The Circuit Class
 // ===========================
 class Circuit {
-	/**
-	 * @param {Node|Array.<Node>} rootNodes - The output node or an array of output nodes.
-	 */
-	constructor(rootNodes) {
-		this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes];
-		this.clock = 0; // The clock state (externally controlled).
-		this.prevClock = this.clock;
-		this.feedbackNodes = []; // Feedback nodes that need updating.
-		this.gateRegistry = {}; // Registered gate functions or sub-circuits.
-	}
+  /**
+   * rootNodes can be a single Node or an array of Node objects.
+   */
+  constructor(name, rootNodes) {
+    this.name = name;
+    this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes];
 
-	#computeInputLength(node, visited = new Set()) {
-		// If the node has been visited already, return -Infinity so it doesn't affect the maximum.
-		if (visited.has(node)) {
-			return -Infinity;
-		}
-		visited.add(node);
+    // We track "time" in discrete ticks
+    this.totalTicks = 0;
+    // currentTick is used for multi-delta cycles within the same "time"
+    this.currentTick = 0;
 
-		let highest = -1;
+    this.clock = 0;
+    this.prevClock = 0;
 
-		// If the node is an InputNode, record its index.
-		if (node instanceof InputNode) {
-			highest = node.index;
-		}
+    // For feedback nodes
+    this.feedbackNodes = [];
+    // For gate functions
+    this.gateRegistry = {};
 
-		// For a GateNode, traverse its child nodes.
-		if (node instanceof GateNode && Array.isArray(node.inputNodes)) {
-			for (let child of node.inputNodes) {
-				highest = Math.max(highest, this.#computeInputLength(child, visited));
-			}
-		}
+    // Our event scheduler
+    this.scheduler = new Scheduler();
 
-		// For a FeedbackNode, traverse its driving expression if available.
-		if (node instanceof FeedbackNode && node.inputNode) {
-			highest = Math.max(highest, this.#computeInputLength(node.inputNode, visited));
-		}
+    this.history = [];
+  }
 
-		return highest;
-	}
+  // -----------------------------------------------------
+  // 4.1) Basic Circuit Accessors
+  // -----------------------------------------------------
+  setClock(value) {
+    this.prevClock = this.clock;
+    this.clock = value;
+  }
+  getClock() {
+    return this.clock;
+  }
 
-	get inputLength() {
-		let highest = -1;
-		for (const node of this.rootNodes) {
-			highest = Math.max(highest, this.#computeInputLength(node));
-		}
-		return highest + 1; // +1 because input indices are zero-based.
-	}
+  getEdgeTrigger() {
+    if (this.clock === this.prevClock) {
+      return "SAME";
+    } else if (this.clock > this.prevClock) {
+      return "POSITIVE EDGE TRIGGER";
+    } else {
+      return "NEGATIVE EDGE TRIGGER";
+    }
+  }
 
-	get outputLength() {
-		return this.rootNodes.length;
-	}
+  registerGate(name, funcOrCircuit) {
+    // If we wanted sub-circuits, we could wrap them, etc.
+    this.gateRegistry[name] = funcOrCircuit;
+  }
 
-	setClock(value) {
-		this.prevClock = this.clock;
-		this.clock = value;
-	}
+  getGate(name) {
+    return this.gateRegistry[name];
+  }
 
-	getClock() {
-		return this.clock;
-	}
+  registerFeedbackNode(node) {
+    if (!(node instanceof FeedbackNode)) {
+      throw new Error("Feedback node must be instance of FeedbackNode.");
+    }
+    this.feedbackNodes.push(node);
+  }
 
-	getEdgeTrigger() {
-		if (this.clock === this.prevClock) {
-			return "SAME";
-		} else if (this.clock > this.prevClock) {
-			return "POSITIVE EDGE TRGGER";
-		} else return "NEGATIVE EDGE TRIGGER";
-	}
+  // -----------------------------------------------------
+  // 4.2) Compute inputLength & outputLength
+  // -----------------------------------------------------
+  #computeInputLength(node, visited = new Set()) {
+    // Avoid infinite loops if there's feedback
+    if (visited.has(node)) {
+      return -Infinity;
+    }
+    visited.add(node);
 
-	/**
-	 * evaluate() performs one update cycle:
-	 *  - It first updates all feedback nodes (computeFeedback() then update()).
-	 *  - Then it re‑evaluates the root nodes after the update.
-	 * It returns the outputs computed after updating the feedback nodes.
-	 */
-	evaluate(inputs = []) {
-		// First, update all feedback nodes.
-		for (const fb of this.feedbackNodes) {
-			fb.computeFeedback(this, inputs);
-		}
-		// Now, re-read outputs after feedback update.
-		const outputs = this.rootNodes.map((node) => node.evaluate(this, inputs));
-		return outputs;
-	}
+    let highest = -1;
+    if (node instanceof InputNode) {
+      highest = node.index;
+    } else if (node instanceof GateNode && Array.isArray(node.inputNodes)) {
+      for (const child of node.inputNodes) {
+        highest = Math.max(highest, this.#computeInputLength(child, visited));
+      }
+    } else if (node instanceof FeedbackNode && node.inputNode) {
+      highest = Math.max(
+        highest,
+        this.#computeInputLength(node.inputNode, visited)
+      );
+    }
+    return highest;
+  }
 
-	/**
-	 * evaluateUntilStable() repeatedly calls evaluate() until the outputs stop changing.
-	 * The clock state remains fixed during this iteration.
-	 */
-	evaluateUntilStable(inputs = [], maxIterations = 100, clockValue = this.clock) {
-		this.clock = clockValue;
-		let outputs = this.evaluate(inputs);
-		let iterations = 0;
-		while (iterations < maxIterations) {
-			const newOutputs = this.evaluate(inputs);
-			if (arraysEqual(newOutputs, outputs)) {
-				break;
-			}
-			outputs = newOutputs;
-			iterations++;
-		}
-		return outputs;
-	}
+  get inputLength() {
+    let highest = -1;
+    for (const node of this.rootNodes) {
+      highest = Math.max(highest, this.#computeInputLength(node));
+    }
+    return highest === -Infinity ? 0 : highest + 1;
+  }
 
-	/**
-	 * tick() performs one update cycle (using evaluate()) and returns the new outputs.
-	 * The clock state is not toggled automatically.
-	 */
-	tick(inputs = []) {
-		return this.evaluate(inputs);
-	}
+  get outputLength() {
+    return this.rootNodes.length;
+  }
 
-	/**
-	 * registerGate accepts a gate function or a Circuit instance.
-	 * (If a Circuit is passed, it is automatically wrapped so that its evaluate() method is called.)
-	 */
-	registerGate(name, funcOrCircuit) {
-		if (funcOrCircuit instanceof Circuit) {
-			const subCircuit = funcOrCircuit;
-			if (subCircuit.rootNodes.length > 1) {
-				funcOrCircuit = (evaluatedInputs) => {
-					return subCircuit.evaluate(evaluatedInputs);
-				};
-			} else {
-				funcOrCircuit = (evaluatedInputs) => {
-					return subCircuit.evaluate(evaluatedInputs)[0];
-				};
-			}
-		}
+  // -----------------------------------------------------
+  // 4.3) Evaluate & Tick (Multi-Delta Implementation)
+  // -----------------------------------------------------
 
-		this.gateRegistry[name] = funcOrCircuit;
-	}
+  /**
+   * evaluate(inputs) => run one "time step" at this.currentTick,
+   * but do multiple "delta cycles" until stable or out of sub-iterations.
+   */
+  evaluate(inputs = [], maxDeltaCycles = 50) {
+    this.currentTick = this.totalTicks;
 
-	getGate(name) {
-		return this.gateRegistry[name];
-	}
+    const subHistory = []; // We'll store all micro-tick info here
 
-	// Register a FeedbackNode.
-	registerFeedbackNode(node) {
-		if (!(node instanceof FeedbackNode)) {
-			throw new Error("Feedback node must be an instance of FeedbackNode.");
-		}
-		this.feedbackNodes.push(node);
-	}
+    let oldOutputs = null;
+    let iteration = 0;
+
+    while (iteration < maxDeltaCycles) {
+      iteration++;
+
+      // ADDED: snapshot the queue before we consume anything
+      //        You can store a deep copy, or just references. Up to you.
+      const queueBefore = [...this.scheduler.events];
+
+      // 1) consume events
+      const events = this.scheduler.consumeEventsForTick(this.currentTick);
+
+      // 2) fire each event callback
+      for (const evt of events) {
+        evt.callback();
+      }
+
+      // 3) update feedback
+      for (const fb of this.feedbackNodes) {
+        fb.computeFeedback(this, inputs);
+      }
+
+      // 4) evaluate root nodes => final outputs
+      const newOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
+
+      // ADDED: record some info about this delta cycle
+      subHistory.push({
+        deltaCycle: iteration,
+        queueBefore: queueBefore, // the queue before we consumed
+        consumedEvents: events, // what we just consumed
+        queueAfter: [...this.scheduler.events], // new snapshot after consumption & possible new scheduling
+        outputs: [...newOutputs],
+      });
+
+      // Check stability
+      if (oldOutputs === null) {
+        oldOutputs = newOutputs;
+        if (!this.scheduler.hasEventsForTick(this.currentTick)) {
+          break;
+        }
+      } else {
+        const stableOutputs = arraysEqual(oldOutputs, newOutputs);
+        const moreEvents = this.scheduler.hasEventsForTick(this.currentTick);
+        if (stableOutputs && !moreEvents) {
+          oldOutputs = newOutputs;
+          break;
+        }
+        oldOutputs = newOutputs;
+      }
+    }
+
+    // push subHistory into a top-level history array
+    this.history.push({
+      tick: this.totalTicks,
+      subHistory,
+    });
+
+    // end of multi-delta for this tick
+    this.totalTicks++;
+
+    return oldOutputs;
+  }
+
+  /**
+   * tick(inputs) => shorthand for evaluate(inputs)
+   */
+  tick(inputs = []) {
+    return this.evaluate(inputs);
+  }
+
+  /**
+   * Optional: evaluateUntilStable across multiple ticks
+   * (If you have multi-tick delays or want to see final, final stable.)
+   */
+  evaluateUntilStable(inputs = [], maxOuterIterations = 100) {
+    let oldOutputs = null;
+    let iteration = 0;
+
+    while (iteration < maxOuterIterations) {
+      const newOutputs = this.tick(inputs);
+      // compare oldOutputs & newOutputs
+      if (arraysEqual(oldOutputs ?? [], newOutputs)) {
+        // no change => stable across ticks
+        return newOutputs;
+      }
+      oldOutputs = newOutputs;
+      iteration++;
+    }
+    return oldOutputs;
+  }
+
+  // -----------------------------------------------------
+  // 4.4) Cloning
+  // -----------------------------------------------------
+  #cloneNode(node, nodeMap = new Map()) {
+    if (nodeMap.has(node)) {
+      return nodeMap.get(node);
+    }
+
+    let newNode;
+    if (node instanceof LiteralNode) {
+      newNode = new LiteralNode(node.value);
+    } else if (node instanceof InputNode) {
+      newNode = new InputNode(node.index);
+    } else if (node instanceof ClockNode) {
+      newNode = new ClockNode();
+    } else if (node instanceof GateNode) {
+      const clonedInputs = node.inputNodes.map((child) =>
+        this.#cloneNode(child, nodeMap)
+      );
+      newNode = new GateNode(node.gateType, clonedInputs, node.delay);
+      newNode.lastValue = node.lastValue;
+    } else if (node instanceof FeedbackNode) {
+      // create a placeholder first to handle cycles
+      newNode = new FeedbackNode(null, node.currentValue, node.delay);
+      nodeMap.set(node, newNode);
+      // now set its input
+      newNode.inputNode = this.#cloneNode(node.inputNode, nodeMap);
+      return newNode;
+    } else {
+      throw new Error("Unsupported node type during clone.");
+    }
+
+    nodeMap.set(node, newNode);
+    return newNode;
+  }
+
+  clone() {
+    // clone root nodes
+    const newRootNodes = this.rootNodes.map((n) => this.#cloneNode(n));
+
+    // create new circuit
+    const newCircuit = new Circuit(this.name, newRootNodes);
+    newCircuit.clock = this.clock;
+    newCircuit.prevClock = this.prevClock;
+
+    // copy gate registry
+    for (const key in this.gateRegistry) {
+      const gate = this.gateRegistry[key];
+      newCircuit.gateRegistry[key] = gate;
+    }
+
+    // clone feedback nodes
+    newCircuit.feedbackNodes = this.feedbackNodes.map((n) =>
+      this.#cloneNode(n)
+    );
+
+    // new circuit has a fresh scheduler
+    newCircuit.scheduler = new Scheduler();
+
+    // copy totalTicks if you want them in sync
+    newCircuit.totalTicks = this.totalTicks;
+
+    return newCircuit;
+  }
 }
