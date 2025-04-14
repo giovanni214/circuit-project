@@ -1,305 +1,238 @@
+// ===========================
+// AST Node Definitions (Array-Based)
+// ===========================
+
+// Base Node – every node implements evaluate(circuit, inputs)
+class Node {
+	evaluate(circuit, inputs) {
+		throw new Error("Evaluate not implemented");
+	}
+}
+
+// LiteralNode returns a fixed binary value (0 or 1).
+class LiteralNode extends Node {
+	constructor(value) {
+		super();
+		this.value = value;
+	}
+	evaluate(circuit, inputs) {
+		return this.value;
+	}
+}
+
+// InputNode retrieves a value from the input array by its index.
+class InputNode extends Node {
+	constructor(index) {
+		super();
+		this.index = index;
+	}
+	evaluate(circuit, inputs) {
+		return inputs[this.index] !== undefined ? inputs[this.index] : 0;
+	}
+}
+
+// ClockNode reads the clock value from the Circuit.
+class ClockNode extends Node {
+	evaluate(circuit, inputs) {
+		return circuit.clock;
+	}
+}
+
+// GateNode collects its child nodes’ evaluations (as an array)
+// and calls the registered gate function with that array.
+class GateNode extends Node {
+	constructor(gateType, inputNodes) {
+		super();
+		this.gateType = gateType;
+		this.inputNodes = inputNodes; // array of Node instances
+	}
+
+	evaluate(circuit, inputs) {
+		const evaluatedInputs = this.inputNodes.map((node) => node.evaluate(circuit, inputs));
+		const gateFunc = circuit.getGate(this.gateType);
+		if (typeof gateFunc !== "function") {
+			throw new Error(`Gate "${this.gateType}" is not registered.`);
+		}
+		return gateFunc(evaluatedInputs, circuit);
+	}
+}
+
+// FeedbackNode holds a value (for example, a latch state).
+// When evaluated, it returns its stored value.
+// Later, its computeFeedback() method computes a new value (based on the current state)
+// and update() sets its stored value to that newly computed value.
+class FeedbackNode extends Node {
+	constructor(inputNode, initialValue = 0) {
+		super();
+		this.inputNode = inputNode; // Driving expression node.
+		this.currentValue = initialValue; // Stored value.
+	}
+	evaluate(circuit, inputs) {
+		return this.currentValue;
+	}
+	computeFeedback(circuit, inputs) {
+		// Compute new value based on current state of the circuit.
+		this.currentValue = this.inputNode.evaluate(circuit, inputs);
+	}
+}
+
+// ===========================
+// Helper Function: Array Equality Checker
+// ===========================
+function arraysEqual(arr1, arr2) {
+	if (arr1.length !== arr2.length) return false;
+	for (let i = 0; i < arr1.length; i++) {
+		if (arr1[i] !== arr2[i]) return false;
+	}
+	return true;
+}
+
+// ===========================
+// Circuit Class with Updated evaluate(), evaluateUntilStable(), and tick()
+// ===========================
 class Circuit {
-  constructor(name, ast = null) {
-    this.name = name;
-    this.ast = ast;
-    this.context = {};
-    this.history = [];
+	/**
+	 * @param {Node|Array.<Node>} rootNodes - The output node or an array of output nodes.
+	 */
+	constructor(rootNodes) {
+		this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes];
+		this.clock = 0; // The clock state (externally controlled).
+		this.prevClock = this.clock;
+		this.feedbackNodes = []; // Feedback nodes that need updating.
+		this.gateRegistry = {}; // Registered gate functions or sub-circuits.
+	}
 
-    // Global clock and iteration info
-    this.clock = 0;
-    this.prevClock = 0;
-    this.totalTicks = 0;
+	#computeInputLength(node, visited = new Set()) {
+		// If the node has been visited already, return -Infinity so it doesn't affect the maximum.
+		if (visited.has(node)) {
+			return -Infinity;
+		}
+		visited.add(node);
 
-    // Persistent feedback array storing outputs across ticks
-    this.feedbackState = [];
-  }
+		let highest = -1;
 
-  // A static helper to create a composite gate circuit in one go
-  static createCompositeGate(name, astBuilder, gateRegs) {
-    const c = new Circuit(name);
-    for (const { gateName, func } of gateRegs) {
-      c.registerGate(gateName, func);
-    }
-    const ast = astBuilder();
-    c.ast = ast;
-    return c;
-  }
+		// If the node is an InputNode, record its index.
+		if (node instanceof InputNode) {
+			highest = node.index;
+		}
 
-  // Basic AST Node
-  static Node = class {
-    constructor(type, value = null, children = []) {
-      this.type = type; // e.g. "input", "clock", "literal", "gate", "feedback"
-      this.value = value;
-      this.children = children;
-    }
-  };
+		// For a GateNode, traverse its child nodes.
+		if (node instanceof GateNode && Array.isArray(node.inputNodes)) {
+			for (let child of node.inputNodes) {
+				highest = Math.max(highest, this.#computeInputLength(child, visited));
+			}
+		}
 
-  // Helpers for building AST
-  static createInputNode(index) {
-    return new Circuit.Node("input", index);
-  }
-  static createClockNode() {
-    return new Circuit.Node("clock");
-  }
-  static createLiteralNode(value) {
-    return new Circuit.Node("literal", value);
-  }
-  static createGateNode(gateName, ...children) {
-    return new Circuit.Node("gate", gateName, children);
-  }
-  static createFeedbackNode(outputIndex, targetInput) {
-    // Ties outputIndex => feedbackState[targetInput]
-    return new Circuit.Node("feedback", { outputIndex, targetInput });
-  }
+		// For a FeedbackNode, traverse its driving expression if available.
+		if (node instanceof FeedbackNode && node.inputNode) {
+			highest = Math.max(highest, this.#computeInputLength(node.inputNode, visited));
+		}
 
-  registerGate(gateName, func) {
-    this.context[gateName] = func;
-    this.history.push(`Registered gate: ${gateName}`);
-  }
+		return highest;
+	}
 
-  setAST(ast) {
-    this.ast = ast;
-    this.history.push("AST set.");
-  }
+	get inputLength() {
+		let highest = -1;
+		for (const node of this.rootNodes) {
+			highest = Math.max(highest, this.#computeInputLength(node));
+		}
+		return highest + 1; // +1 because input indices are zero-based.
+	}
 
-  // Count how many input nodes exist in the AST
-  _computeInputCount(node = this.ast) {
-    if (!node) return 0;
-    if (Array.isArray(node)) {
-      return node.reduce(
-        (max, n) => Math.max(max, this._computeInputCount(n)),
-        0
-      );
-    }
-    let c = 0;
-    if (node.type === "input") c = node.value + 1;
-    if (node.children) {
-      for (const child of node.children) {
-        c = Math.max(c, this._computeInputCount(child));
-      }
-    }
-    return c;
-  }
+	get outputLength() {
+		return this.rootNodes.length;
+	}
 
-  get inputLength() {
-    return this._computeInputCount();
-  }
+	setClock(value) {
+		this.prevClock = this.clock;
+		this.clock = value;
+	}
 
-  // We'll do a single-pass evaluate that reads from this.feedbackState
-  _singlePassEvaluate(inputs) {
-    const evalNode = (node) => {
-      switch (node.type) {
-        case "input": {
-          return inputs[node.value];
-        }
-        case "clock": {
-          return this.clock;
-        }
-        case "literal": {
-          return node.value;
-        }
-        case "feedback": {
-          // read from the feedbackState array
-          const { outputIndex, targetInput } = node.value;
-          return this.feedbackState[targetInput] ?? 0;
-        }
-        case "gate": {
-          const gateFunc = this.context[node.value];
-          if (!gateFunc)
-            throw new Error(`Gate '${node.value}' not found in context.`);
-          const childVals = node.children.map((ch) => evalNode(ch));
-          return gateFunc(...childVals);
-        }
-        default:
-          throw new Error(`Unknown node type: ${node.type}`);
-      }
-    };
+	getClock() {
+		return this.clock;
+	}
 
-    let out = Array.isArray(this.ast)
-      ? this.ast.map((n) => evalNode(n))
-      : evalNode(this.ast);
+	getEdgeTrigger() {
+		if (this.clock === this.prevClock) {
+			return "SAME";
+		} else if (this.clock > this.prevClock) {
+			return "POSITIVE EDGE TRGGER";
+		} else return "NEGATIVE EDGE TRIGGER";
+	}
 
-    return Array.isArray(out) ? out : [out];
-  }
+	/**
+	 * evaluate() performs one update cycle:
+	 *  - It first updates all feedback nodes (computeFeedback() then update()).
+	 *  - Then it re‑evaluates the root nodes after the update.
+	 * It returns the outputs computed after updating the feedback nodes.
+	 */
+	evaluate(inputs = []) {
+		// First, update all feedback nodes.
+		for (const fb of this.feedbackNodes) {
+			fb.computeFeedback(this, inputs);
+		}
+		// Now, re-read outputs after feedback update.
+		const outputs = this.rootNodes.map((node) => node.evaluate(this, inputs));
+		return outputs;
+	}
 
-  // Called each time step: single pass, store outputs
-  tick(inputs, newClockValue = this.clock) {
-    this.prevClock = this.clock;
-    this.clock = newClockValue;
-    this.totalTicks++;
+	/**
+	 * evaluateUntilStable() repeatedly calls evaluate() until the outputs stop changing.
+	 * The clock state remains fixed during this iteration.
+	 */
+	evaluateUntilStable(inputs = [], maxIterations = 100, clockValue = this.clock) {
+		this.clock = clockValue;
+		let outputs = this.evaluate(inputs);
+		let iterations = 0;
+		while (iterations < maxIterations) {
+			const newOutputs = this.evaluate(inputs);
+			if (arraysEqual(newOutputs, outputs)) {
+				break;
+			}
+			outputs = newOutputs;
+			iterations++;
+		}
+		return outputs;
+	}
 
-    const outputs = this._singlePassEvaluate(inputs);
-    this._updateFeedback(outputs);
-    return outputs;
-  }
+	/**
+	 * tick() performs one update cycle (using evaluate()) and returns the new outputs.
+	 * The clock state is not toggled automatically.
+	 */
+	tick(inputs = []) {
+		return this.evaluate(inputs);
+	}
 
-  // Store the new outputs in feedbackState
-  _updateFeedback(outputs) {
-    const fbnodes = this._collectFeedbackNodes(this.ast);
-    for (const { outputIndex, targetInput } of fbnodes) {
-      this.feedbackState[targetInput] = outputs[outputIndex] ?? 0;
-    }
-  }
+	/**
+	 * registerGate accepts a gate function or a Circuit instance.
+	 * (If a Circuit is passed, it is automatically wrapped so that its evaluate() method is called.)
+	 */
+	registerGate(name, funcOrCircuit) {
+		if (funcOrCircuit instanceof Circuit) {
+			const subCircuit = funcOrCircuit;
+			if (subCircuit.rootNodes.length > 1) {
+				funcOrCircuit = (evaluatedInputs) => {
+					return subCircuit.evaluate(evaluatedInputs);
+				};
+			} else {
+				funcOrCircuit = (evaluatedInputs) => {
+					return subCircuit.evaluate(evaluatedInputs)[0];
+				};
+			}
+		}
 
-  _collectFeedbackNodes(node) {
-    let arr = [];
-    if (!node) return arr;
-    if (Array.isArray(node)) {
-      for (const n of node) {
-        arr = arr.concat(this._collectFeedbackNodes(n));
-      }
-      return arr;
-    }
-    if (node.type === "feedback") {
-      arr.push(node.value);
-    }
-    if (node.children) {
-      for (const c of node.children) {
-        arr = arr.concat(this._collectFeedbackNodes(c));
-      }
-    }
-    return arr;
-  }
+		this.gateRegistry[name] = funcOrCircuit;
+	}
 
-  // Generate a truth table (only recommended for pure combinational or small circuits).
-  generateTruthTable() {
-    const table = [];
-    const rowCount = 2 ** this.inputLength;
-    for (let i = 0; i < rowCount; i++) {
-      // If there's a clock, it's read from .clock, not from inputs
-      // so this isn't truly correct for sequential circuits
-      // but we'll do the naive approach
-      const bits = i
-        .toString(2)
-        .padStart(this.inputLength, "0")
-        .split("")
-        .map(Number);
-      const out = this._singlePassEvaluate(bits);
-      table.push({ inputs: bits, outputs: out });
-    }
-    return table;
-  }
+	getGate(name) {
+		return this.gateRegistry[name];
+	}
 
-  // Visualize the AST
-  visualizeAST(node = this.ast, indent = 0) {
-    const pad = "  ".repeat(indent);
-    if (!node) return "";
-    if (Array.isArray(node)) {
-      return node.map((n) => this.visualizeAST(n, indent)).join("\n");
-    }
-    switch (node.type) {
-      case "input":
-        return `${pad}Input(${node.value})`;
-      case "clock":
-        return `${pad}ClockNode()`;
-      case "literal":
-        return `${pad}Literal(${node.value})`;
-      case "feedback": {
-        const { outputIndex, targetInput } = node.value;
-        return `${pad}Feedback(out:${outputIndex} -> in:${targetInput})`;
-      }
-      case "gate": {
-        const kids = node.children
-          .map((ch) => this.visualizeAST(ch, indent + 1))
-          .join("\n");
-        return `${pad}Gate(${node.value})\n${kids}`;
-      }
-      default:
-        return `${pad}Unknown(${node.type})`;
-    }
-  }
-
-  // chainWith: connect this circuit's outputs to another circuit's inputs
-  chainWith(other) {
-    // in a simple form, we do single pass evaluate => feed into other
-    const outLen = this.outputLength;
-    const inLen = other.inputLength;
-    if (outLen !== inLen) {
-      throw new Error(
-        `Mismatch: ${this.name} outputs ${outLen} bits, but ${other.name} needs ${inLen} inputs`
-      );
-    }
-    const chained = new Circuit(`${this.name}_chained_${other.name}`);
-    // Merge contexts
-    chained.context = { ...this.context, ...other.context };
-    // We define a custom single pass:
-    chained._singlePassEvaluate = (inputs) => {
-      const inter = this._singlePassEvaluate(inputs);
-      return other._singlePassEvaluate(inter);
-    };
-    return chained;
-  }
-
-  // For quick logic: if there's no prior state, pass dummy inputs => evaluate => see how many outputs
-  get outputLength() {
-    const dummy = new Array(this.inputLength).fill(0);
-    const out = this._singlePassEvaluate(dummy);
-    return out.length;
-  }
-
-  // clone
-  static _cloneAST(node) {
-    if (!node) return null;
-    const copy = new Circuit.Node(node.type, node.value, []);
-    if (node.children && node.children.length > 0) {
-      copy.children = node.children.map((ch) => Circuit._cloneAST(ch));
-    }
-    return copy;
-  }
-
-  clone() {
-    const c = new Circuit(this.name);
-    c.ast = Array.isArray(this.ast)
-      ? this.ast.map((n) => Circuit._cloneAST(n))
-      : Circuit._cloneAST(this.ast);
-    c.context = { ...this.context };
-    c.history = [...this.history];
-    c.clock = this.clock;
-    c.prevClock = this.prevClock;
-    c.totalTicks = this.totalTicks;
-    // feedbackState is part of the circuit's internal memory
-    c.feedbackState = [...this.feedbackState];
-    return c;
-  }
+	// Register a FeedbackNode.
+	registerFeedbackNode(node) {
+		if (!(node instanceof FeedbackNode)) {
+			throw new Error("Feedback node must be an instance of FeedbackNode.");
+		}
+		this.feedbackNodes.push(node);
+	}
 }
-
-///////////////////////////////////////////////////////////////
-// Minimal example: a D-latch made from cross-coupled NOR gates
-// using numeric feedback nodes, returned from a builder function
-///////////////////////////////////////////////////////////////
-
-function buildSimpleDLatchAST() {
-  const D = Circuit.createInputNode(0);
-  const CLK = Circuit.createClockNode();
-
-  const notCLK = Circuit.createGateNode("NOT", CLK);
-  const notD = Circuit.createGateNode("NOT", D);
-
-  const S = Circuit.createGateNode("AND", D, notCLK);
-  const R = Circuit.createGateNode("AND", notD, notCLK);
-
-  // Q references output #1 => Q'
-  const fbQ = Circuit.createFeedbackNode(1, 0);
-  // Q' references output #0 => Q
-  const fbQp = Circuit.createFeedbackNode(0, 1);
-
-  const Q_node = Circuit.createGateNode("NOR", R, fbQ);
-  const Qp_node = Circuit.createGateNode("NOR", S, fbQp);
-  return [Q_node, Qp_node];
-}
-
-// Basic gates
-const AND_GATE = (a, b) => a && b;
-const NOT_GATE = (x) => Number(!x);
-const NOR_GATE = (a, b) => Number(!(a || b));
-
-// Build with createCompositeGate
-const dLatchCircuit = Circuit.createCompositeGate(
-  "SimpleDLatch",
-  () => buildSimpleDLatchAST(),
-  [
-    { gateName: "AND", func: AND_GATE },
-    { gateName: "NOT", func: NOT_GATE },
-    { gateName: "NOR", func: NOR_GATE },
-  ]
-);
