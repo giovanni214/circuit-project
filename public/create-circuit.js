@@ -16,7 +16,8 @@ const notCLK = new GateNode("NOT", [CLK], 0);
 const masterFeedback = new FeedbackNode(
   /* inputNode= */ null,
   /* initial= */ 0,
-  /* delay= */ 0
+  /* delay= */ 0,
+  "MASTER"
 );
 
 // Two partial terms:
@@ -30,7 +31,7 @@ masterFeedback.inputNode = masterOR;
 
 // --------------- SLAVE LATCH ---------------
 // Q_next = (Qm AND NOT CLK) OR (Q AND CLK)
-const slaveFeedback = new FeedbackNode(null, 0, 0);
+const slaveFeedback = new FeedbackNode(null, 0, 0, "SLAVE");
 const slaveTerm1 = new GateNode("AND", [masterFeedback, notCLK], 0);
 const slaveTerm2 = new GateNode("AND", [slaveFeedback, CLK], 0);
 const slaveOR = new GateNode("OR", [slaveTerm1, slaveTerm2], 0);
@@ -38,10 +39,7 @@ const slaveOR = new GateNode("OR", [slaveTerm1, slaveTerm2], 0);
 slaveFeedback.inputNode = slaveOR;
 
 // --------------- BUILD THE CIRCUIT ---------------
-const dFlipFlop = new Circuit("D-FlipFlop (multi-delta)", [
-  masterFeedback,
-  slaveFeedback,
-]);
+const dFlipFlop = new Circuit("D-FlipFlop", [masterFeedback, slaveFeedback]);
 
 // Register basic gates
 dFlipFlop.registerGate("AND", (inputs) => Number(inputs[0] && inputs[1]));
@@ -86,3 +84,5 @@ printState(5, dFlipFlop.getClock(), 0, out);
 dFlipFlop.setClock(0);
 out = dFlipFlop.tick([1]);
 printState(6, dFlipFlop.getClock(), 1, out);
+
+console.log(dFlipFlop.toString());
