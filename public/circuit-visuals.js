@@ -362,10 +362,7 @@ function setup() {
   createCanvas(500, 500);
   rectMode(CENTER);
 
-  shapes.push(new CircuitShape(width / 2, height / 2, 200, dFlipFlop.clone()));
-  shapes.push(
-    new CircuitShape(width / 2 - 250, height / 2, 200, dFlipFlop.clone())
-  );
+  // shapes.push(new CircuitShape(width / 2, height / 2, 200, dFlipFlop.clone()));
   // shapes.push(new Square(200, 150, 100));
 }
 
