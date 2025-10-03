@@ -33,10 +33,43 @@ const exp4 = new GateNode("AND", [notA, b, notC]);
 
 const combined = new GateNode("OR", [exp1, exp2, exp3, exp4]);
 
-const circuit = new Circuit("mystery", [combined]);
+const circuit = new Circuit("GIO", [combined]);
 circuit.registerGate("OR", OR_FUNC);
 circuit.registerGate("NOT", NOT_FUNC);
 circuit.registerGate("AND", AND_FUNC);
 
-const table = circuit.simplify();
-console.log(table);
+const newCircuit = circuit.simplify();
+console.log(circuit.rootNodes.toString());
+console.log(newCircuit.rootNodes.toString());
+
+function verifyTruthTables(table1, table2) {
+	if (table1.length !== table2.length) {
+		return false; // different number of rows
+	}
+
+	for (let i = 0; i < table1.length; i++) {
+		const row1 = table1[i];
+		const row2 = table2[i];
+
+		// compare inputs
+		if (row1.inputs.join() !== row2.inputs.join()) {
+			console.error(`Mismatch at row ${i}: inputs differ`, row1.inputs, row2.inputs);
+			return false;
+		}
+
+		// compare outputs
+		if (row1.outputs.join() !== row2.outputs.join()) {
+			console.error(`Mismatch at row ${i}: outputs differ`, row1.outputs, row2.outputs);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// Example usage:
+const tableA = circuit.generateTruthTable();
+
+const tableB = circuit.generateTruthTable();
+
+console.log("Tables Table Vericiation: ", verifyTruthTables(tableA, tableB)); // true

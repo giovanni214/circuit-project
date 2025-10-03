@@ -5,26 +5,26 @@ class Scheduler {
 	constructor() {
 		this.events = [];
 	}
-
 	/**
 	 * scheduleEvent: queue a callback to run at targetTick
 	 */
+
 	scheduleEvent(targetTick, callback) {
 		this.events.push({ targetTick, callback });
 	}
-
 	/**
 	 * consumeEventsForTick: remove and return all events for a given tick
 	 */
+
 	consumeEventsForTick(tick) {
 		const ready = this.events.filter((e) => e.targetTick === tick);
 		this.events = this.events.filter((e) => e.targetTick !== tick);
 		return ready;
 	}
-
 	/**
 	 * hasEventsForTick: does at least one event remain for this tick?
 	 */
+
 	hasEventsForTick(tick) {
 		return this.events.some((e) => e.targetTick === tick);
 	}
@@ -173,6 +173,22 @@ function arraysEqual(a, b) {
 	return true;
 }
 
+// Standard gate implementations for simplification
+const STANDARD_GATES = {
+	OR: (inputs) => {
+		return inputs.reduce((acc, bit) => acc | bit, 0);
+	},
+	AND: (inputs) => {
+		return inputs.reduce((acc, bit) => acc & bit, 1);
+	},
+	NOT: (input) => {
+		if (input.length !== 1) {
+			throw new Error("NOT gate requires exactly one input");
+		}
+		return input[0] ? 0 : 1;
+	}
+};
+
 // ===========================
 // 4) The Circuit Class
 // ===========================
@@ -182,31 +198,28 @@ class Circuit {
 	 */
 	constructor(name, rootNodes) {
 		this.name = name;
-		this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes];
+		this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes]; // timing
 
-		// timing
 		this.totalTicks = 0;
 		this.currentTick = 0;
 		this.clock = 0;
-		this.prevClock = 0;
+		this.prevClock = 0; // feedback + gates
 
-		// feedback + gates
 		this.feedbackNodes = [];
 		this.gateRegistry = {};
 		this.scheduler = new Scheduler();
 		this.history = [];
 	}
 
-	// -----------------------------------------------------
-	// 4.1) Basic Circuit Accessors
-	// -----------------------------------------------------
 	setClock(value) {
 		this.prevClock = this.clock;
 		this.clock = value;
 	}
+
 	getClock() {
 		return this.clock;
 	}
+
 	getEdgeTrigger() {
 		if (this.clock === this.prevClock) {
 			return "SAME";
@@ -225,11 +238,8 @@ class Circuit {
 	}
 	registerFeedbackNode(node) {
 		this.feedbackNodes.push(node);
-	}
+	} // ----------------------------------------------------- // 4.2) Compute inputLength & outputLength // -----------------------------------------------------
 
-	// -----------------------------------------------------
-	// 4.2) Compute inputLength & outputLength
-	// -----------------------------------------------------
 	#computeInputLength(node, visited = new Set()) {
 		if (visited.has(node)) return -Infinity;
 		visited.add(node);
@@ -256,11 +266,8 @@ class Circuit {
 	}
 	get outputLength() {
 		return this.rootNodes.length;
-	}
+	} // ----------------------------------------------------- // 4.3) Evaluate & Tick (Multi-Delta Implementation) // -----------------------------------------------------
 
-	// -----------------------------------------------------
-	// 4.3) Evaluate & Tick (Multi-Delta Implementation)
-	// -----------------------------------------------------
 	evaluate(inputs = [], maxDeltaCycles = 50) {
 		this.currentTick = this.totalTicks;
 		const subHistory = [];
@@ -300,11 +307,8 @@ class Circuit {
 			old = out;
 		}
 		return old;
-	}
+	} // ----------------------------------------------------- // 4.4) Cloning // -----------------------------------------------------
 
-	// -----------------------------------------------------
-	// 4.4) Cloning
-	// -----------------------------------------------------
 	#cloneNode(node, nodeMap) {
 		if (nodeMap.has(node)) return nodeMap.get(node);
 
@@ -346,30 +350,21 @@ class Circuit {
 		c.history = [];
 		c.totalTicks = this.totalTicks;
 		return c;
-	}
+	} // ----------------------------------------------------- // 4.5) Human-readable toString (using Set to guard recursion) // -----------------------------------------------------
 
-	// -----------------------------------------------------
-	// 4.5) Human-readable toString (using Set to guard recursion)
-	// -----------------------------------------------------
 	toString() {
-		const lines = [];
+		const lines = []; // 1) feedbackNodes in order
 
-		// 1) feedbackNodes in order
 		for (let i = 0; i < this.feedbackNodes.length; i++) {
 			const fb = this.feedbackNodes[i];
-			const ctx = createDefaultContext();
+			const ctx = createDefaultContext(); // pre‑mark every feedback node printed *before* this one
 
-			// pre‑mark every feedback node printed *before* this one
 			for (let j = 0; j < i; j++) {
 				ctx.visited.add(this.feedbackNodes[j]);
-			}
+			} // now toString will inline THIS fb, but will render any earlier fb as feedbackFrom(...)
 
-			// now toString will inline THIS fb, but will render any earlier fb as feedbackFrom(...)
 			lines.push(fb.toString(ctx));
-		}
-
-		// 2) (optional) if you have non‑feedback outputs, do the same trick:
-		// for (const node of this.rootNodes) { ... }
+		} // 2) (optional) if you have non‑feedback outputs, do the same trick: // for (const node of this.rootNodes) { ... }
 
 		return lines.join("\n");
 	}
@@ -385,9 +380,8 @@ class Circuit {
 	generateTruthTable() {
 		let truthTable = [];
 		const n = this.inputLength;
-		const combinations = 1 << n;
+		const combinations = 1 << n; //Generate all possible inputs and put them into an array
 
-		//Generate all possible inputs and put them into an array
 		for (let i = 0; i < combinations; i++) {
 			const inputs = this.#numToBitArray(i, n);
 			const outputs = this.evaluate(inputs);
@@ -418,9 +412,8 @@ class Circuit {
 		}
 
 		return groups;
-	}
+	} //XOR's each bit one by one and counts number of 1's
 
-	//XOR's each bit one by one and counts number of 1's
 	#computeHammingDistance(a, b) {
 		if (a.length !== b.length) {
 			throw new Error("Length mismatch");
@@ -464,27 +457,21 @@ class Circuit {
 
 		while (true) {
 			// 1) bucket by count of 1s (ignoring “–”)
-			const groups = this.#groupByOnes(implicants);
-			// 2) merge every pair differing by exactly one bit
-			const combined = this.#combineBitDifferences(groups);
-			// 3) if nothing new could be merged, we’re done
+			const groups = this.#groupByOnes(implicants); // 2) merge every pair differing by exactly one bit
+			const combined = this.#combineBitDifferences(groups); // 3) if nothing new could be merged, we’re done
 			if (combined.length === 0) {
 				return implicants;
-			}
-			// 4) otherwise, repeat on the newly formed terms
+			} // 4) otherwise, repeat on the newly formed terms
 			implicants = combined;
 		}
 	}
 
 	#findCoverValues(prime) {
 		//clone array
-		const bits = [...prime];
+		const bits = [...prime]; // 2) We'll build up our cover list one position at a time. //    Start with a single "empty" partial term:
 
-		// 2) We'll build up our cover list one position at a time.
-		//    Start with a single "empty" partial term:
-		let results = [[]];
+		let results = [[]]; // 3) For each bit position, expand the partials:
 
-		// 3) For each bit position, expand the partials:
 		for (const bit of bits) {
 			const nextResults = [];
 
@@ -500,9 +487,8 @@ class Circuit {
 				for (const seq of results) {
 					nextResults.push([...seq, b]);
 				}
-			}
+			} // move on to the newly extended partials
 
-			// move on to the newly extended partials
 			results = nextResults;
 		}
 
@@ -514,9 +500,8 @@ class Circuit {
 		const coverMap = new Map();
 		for (const term of minterms) {
 			coverMap.set(term.join(""), new Set());
-		}
+		} // 2) For each prime implicant, mark which minterms it covers
 
-		// 2) For each prime implicant, mark which minterms it covers
 		primes.forEach((prime, pIdx) => {
 			// find all the concrete minterms covered by this prime
 			const covered = this.#findCoverValues(prime);
@@ -526,14 +511,12 @@ class Circuit {
 					coverMap.get(mKey).add(pIdx);
 				}
 			}
-		});
+		}); // 3) Any minterm covered by exactly one prime → that prime is essential
 
-		// 3) Any minterm covered by exactly one prime → that prime is essential
 		const essentialIdxs = new Set();
 		for (const [mKey, pSet] of coverMap.entries()) {
 			if (pSet.size === 1) {
 				const [sole] = pSet; // the only prime covering this minterm
-				console.log(sole);
 				essentialIdxs.add(sole);
 			}
 		}
@@ -653,15 +636,52 @@ class Circuit {
 			})
 			.filter(Boolean)
 			.join("·");
-	}
+	} //Simplifying using Quine–McCluskey algorithm
 
-	//Simplifying using Quine–McCluskey algorithm
 	simplify() {
 		const truthTable = this.generateTruthTable();
 		const minterms = this.#generateMinterms(truthTable, 0);
 		const primes = this.#findPrimeImplicants(minterms);
 		const bestPrimes = this.#petrickMethod(minterms, primes);
 
-		return bestPrimes.map((p) => this.#formatImplicant(p));
+		let a = bestPrimes.map((p) => this.#formatImplicant(p));
+		const inputNodes = Array.from({ length: this.inputLength }, (_, i) => new InputNode(i));
+
+		const andGates = bestPrimes.map((prime) => {
+			const inputsForAnd = prime
+				.map((bit, i) => {
+					if (bit === 0) {
+						return new GateNode("NOT", [inputNodes[i]]);
+					} else if (bit === 1) {
+						return inputNodes[i];
+					}
+					return null; // Don't care, so don't include in AND
+				})
+				.filter(Boolean); // Remove nulls
+
+			if (inputsForAnd.length === 0) {
+				// If a prime is all don't cares (e.g., "- - -"), it means the output is always 1.
+				// This case should ideally be handled earlier or result in a single LiteralNode(1).
+				// For now, we'll represent it as a constant 1.
+				return new LiteralNode(1);
+			}
+			if (inputsForAnd.length === 1) {
+				return inputsForAnd[0]; // If only one input, the AND gate is just that input
+			}
+			return new GateNode("AND", inputsForAnd);
+		});
+
+		let simplifiedCircuitNode;
+		if (andGates.length === 0) {
+			simplifiedCircuitNode = new LiteralNode(0); // No minterms, output is always 0
+		} else if (andGates.length === 1) {
+			simplifiedCircuitNode = andGates[0];
+		} else {
+			simplifiedCircuitNode = new GateNode("OR", andGates);
+		} // Create the new circuit with the simplified node structure.
+
+		const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedCircuitNode]); // The simplified circuit is in Sum-of-Products form, which only requires // standard AND, OR, and NOT gates.
+		simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+		return simplifiedCircuit;
 	}
 }
