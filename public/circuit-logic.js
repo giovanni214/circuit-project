@@ -139,6 +139,97 @@ class GateNode extends Node {
 	}
 }
 
+// ... inside circuit-logic.js
+// Replace the old CompositeNode with this updated version.
+
+class CompositeNode extends Node {
+	constructor(subCircuit, inputNodes) {
+		super();
+		if (!(subCircuit instanceof Circuit)) {
+			throw new Error("CompositeNode requires a valid Circuit instance.");
+		}
+		this.subCircuit = subCircuit.clone();
+		this.inputNodes = inputNodes;
+
+		if (this.inputNodes.length !== this.subCircuit.inputLength) {
+			throw new Error(
+				`Input mismatch: The sub-circuit "${this.subCircuit.name}" expects ${this.subCircuit.inputLength} inputs, but was provided ${this.inputNodes.length}.`
+			);
+		}
+
+		// Cache to store the results for the current tick
+		this.lastEvaluationTick = -1;
+		this.cachedOutputs = [];
+	}
+
+	evaluate(parentCircuit, parentInputs) {
+		// If we've already evaluated this sub-circuit during the current tick, return the cached result.
+		if (this.lastEvaluationTick === parentCircuit.currentTick) {
+			return this.cachedOutputs;
+		}
+
+		const subCircuitInputs = this.inputNodes.map((node) => node.evaluate(parentCircuit, parentInputs));
+
+		// --- START DEBUGGING ADDITION ---
+		console.log("--- Debugging CompositeNode ---");
+		console.log("Sub-circuit object:", this.subCircuit);
+		console.log("Is 'evaluateUntilStable' a function?", typeof this.subCircuit.evaluateUntilStable);
+		// --- END DEBUGGING ADDITION ---
+
+		// This is the line that causes the error
+		this.cachedOutputs = this.subCircuit.evaluateUntilStable(subCircuitInputs);
+		this.lastEvaluationTick = parentCircuit.currentTick; // Mark as evaluated for this tick.
+
+		return this.cachedOutputs;
+	}
+
+	toString(context = createDefaultContext()) {
+		if (context.visited.has(this)) {
+			return `...recursion...`;
+		}
+		context.visited.add(this);
+
+		const childStrs = this.inputNodes.map((child) => child.toString(context));
+		return `${this.subCircuit.name}(${childStrs.join(", ")})`;
+	}
+}
+
+// ==========================================================
+// NEW: Node for selecting a specific output from a CompositeNode
+// ==========================================================
+class SubCircuitOutputNode extends Node {
+	/**
+	 * @param {CompositeNode} compositeNode - The composite node to tap into.
+	 * @param {number} outputIndex - The index of the output to select from the sub-circuit.
+	 */
+	constructor(compositeNode, outputIndex) {
+		super();
+		if (!(compositeNode instanceof CompositeNode)) {
+			throw new Error("SubCircuitOutputNode requires a CompositeNode as its input.");
+		}
+		this.compositeNode = compositeNode;
+		this.outputIndex = outputIndex;
+	}
+
+	evaluate(parentCircuit, parentInputs) {
+		// This triggers the evaluation of the composite node if it hasn't run yet for this tick.
+		// The result is then retrieved from the composite node's cache.
+		const subCircuitOutputs = this.compositeNode.evaluate(parentCircuit, parentInputs);
+
+		if (this.outputIndex >= subCircuitOutputs.length) {
+			throw new Error(
+				`Output index ${this.outputIndex} is out of bounds for sub-circuit "${this.compositeNode.subCircuit.name}".`
+			);
+		}
+
+		return subCircuitOutputs[this.outputIndex];
+	}
+
+	toString(context = createDefaultContext()) {
+		return `${this.compositeNode.toString(context)}[${this.outputIndex}]`;
+	}
+}
+
 class FeedbackNode extends Node {
 	constructor(inputNode, initialValue = 0, delay = 0, name = "Q") {
 		super();
@@ -351,6 +442,15 @@ class Circuit {
 			nodeMap.set(node, copy);
 			copy.inputNode = this.#cloneNode(node.inputNode, nodeMap);
 			return copy;
+		} else if (node instanceof CompositeNode) {
+			// The sub-circuit is already cloned in the constructor, so we just need to clone the input connections.
+			const clonedInputs = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
+			copy = new CompositeNode(node.subCircuit, clonedInputs);
+		} else if (node instanceof SubCircuitOutputNode) {
+			// First, get the clone of the CompositeNode this node points to.
+			// This is crucial for wiring up the new circuit correctly.
+			const clonedCompositeNode = this.#cloneNode(node.compositeNode, nodeMap);
+			copy = new SubCircuitOutputNode(clonedCompositeNode, node.outputIndex);
 		} else {
 			throw new Error("Unsupported node type during clone.");
 		}

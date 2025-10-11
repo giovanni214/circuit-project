@@ -1,111 +1,63 @@
-// OR‐gate over N inputs
-function OR_FUNC(inputs) {
-	const result = inputs.reduce((acc, bit) => acc | bit, 0);
-	return result;
-}
+// --- 1. Define the reusable Half-Adder Circuit ---
+const ha_a = new InputNode(0);
+const ha_b = new InputNode(1);
 
-// AND‐gate over N inputs
-function AND_FUNC(inputs) {
-	const result = inputs.reduce((acc, bit) => acc & bit, 1);
-	return result;
-}
+// Logic for Sum (A XOR B)
+const notA = new GateNode("NOT", [ha_a]);
+const notB = new GateNode("NOT", [ha_b]);
+const sumTerm1 = new GateNode("AND", [ha_a, notB]);
+const sumTerm2 = new GateNode("AND", [notA, ha_b]);
+const sumOutput = new GateNode("OR", [sumTerm1, sumTerm2]);
 
-// NOT‐gate (expects exactly one input)
-function NOT_FUNC(input) {
-	if (input.length !== 1) {
-		throw new Error("NOT gate requires exactly one input");
-	}
-	return input[0] ? 0 : 1;
-}
+// Logic for Carry (A AND B)
+const carryOutput = new GateNode("AND", [ha_a, ha_b]);
 
-/**
- * Creates a master-slave D flip-flop circuit.
- * This is a negative-edge-triggered flip-flop.
- * @returns {Circuit} A new Circuit instance representing the D flip-flop.
- */
-function createDFlipFlop() {
-	// Inputs: D (Data) at index 0, CLK (Clock) at index 1
-	const D = new InputNode(0);
-	const CLK = new ClockNode(); // Using a dedicated ClockNode
+// Create the circuit with TWO outputs: Output[0] = Sum, Output[1] = Carry
+const halfAdderCircuit = new Circuit("HalfAdder", [sumOutput, carryOutput]);
+halfAdderCircuit.registerGate("AND", (inputs) => Number(inputs[0] && inputs[1]));
+halfAdderCircuit.registerGate("OR", (inputs) => Number(inputs[0] || inputs[1]));
+halfAdderCircuit.registerGate("NOT", (inputs) => Number(!inputs[0]));
 
-	// Internal feedback nodes for the master and slave latches
-	const masterQ = new FeedbackNode(null, 0, 0, "masterQ");
-	const slaveQ = new FeedbackNode(null, 0, 0, "slaveQ");
+// --- 2. Build the Full-Adder using the Half-Adder component ---
 
-	// Master Latch Logic (transparent when CLK is HIGH)
-	// masterQ_next = (D AND CLK) OR (masterQ AND NOT CLK)
-	const notCLK = new GateNode("NOT", [CLK]);
-	const masterTerm1 = new GateNode("AND", [D, CLK]);
-	const masterTerm2 = new GateNode("AND", [masterQ, notCLK]);
-	const masterQNext = new GateNode("OR", [masterTerm1, masterTerm2]);
-	masterQ.inputNode = masterQNext; // Wire up the feedback
+// Define top-level inputs: A, B, and Carry-In (Cin)
+const A = new InputNode(0);
+const B = new InputNode(1);
+const Cin = new InputNode(2);
 
-	// Slave Latch Logic (transparent when CLK is LOW)
-	// slaveQ_next = (masterQ AND NOT CLK) OR (slaveQ AND CLK)
-	const slaveTerm1 = new GateNode("AND", [masterQ, notCLK]);
-	const slaveTerm2 = new GateNode("AND", [slaveQ, CLK]);
-	const slaveQNext = new GateNode("OR", [slaveTerm1, slaveTerm2]);
-	slaveQ.inputNode = slaveQNext; // Wire up the feedback
+// First Half-Adder (takes A and B)
+const ha1 = new CompositeNode(halfAdderCircuit, [A, B]);
 
-	// Create the circuit with slaveQ as the final output
-	const dff = new Circuit("D-Flip-Flop", [slaveQ]);
-	dff.registerFeedbackNode(masterQ);
-	dff.registerFeedbackNode(slaveQ);
-	return dff;
-}
+// Use SubCircuitOutputNode to tap into its outputs
+const ha1_Sum = new SubCircuitOutputNode(ha1, 0); // Output 0 is Sum
+const ha1_Carry = new SubCircuitOutputNode(ha1, 1); // Output 1 is Carry
 
-const a = new InputNode(0);
-const b = new InputNode(1);
-const c = new InputNode(2);
+// Second Half-Adder (takes the sum of the first one and Cin)
+const ha2 = new CompositeNode(halfAdderCircuit, [ha1_Sum, Cin]);
 
-const notA = new GateNode("NOT", [a]);
-const notB = new GateNode("NOT", [b]);
-const notC = new GateNode("NOT", [c]);
+// Tap into the second half-adder's outputs
+const ha2_Sum = new SubCircuitOutputNode(ha2, 0); // This is our final Sum
+const ha2_Carry = new SubCircuitOutputNode(ha2, 1);
 
-const exp1 = new GateNode("AND", [a, b, notC]);
-const exp2 = new GateNode("AND", [a, notB, notC]);
-const exp3 = new GateNode("AND", [notA, b, c]);
-const exp4 = new GateNode("AND", [notA, b, notC]);
+// Final logic for Carry-Out: (ha1_Carry OR ha2_Carry)
+const finalCarryOut = new GateNode("OR", [ha1_Carry, ha2_Carry]);
 
-const combined = new GateNode("OR", [exp1, exp2, exp3, exp4]);
+// Build the final Full-Adder circuit with its two outputs
+const fullAdderCircuit = new Circuit("FullAdder", [ha2_Sum, finalCarryOut]);
+fullAdderCircuit.registerGate("OR", (inputs) => Number(inputs[0] || inputs[1])); // Only needs OR
 
-const circuit = new Circuit("GIO", [combined]);
-circuit.registerGate("OR", OR_FUNC);
-circuit.registerGate("NOT", NOT_FUNC);
-circuit.registerGate("AND", AND_FUNC);
+// --- 3. Verification ---
+console.log("Full-Adder Truth Table:");
+const truthTable = fullAdderCircuit.generateTruthTable();
+console.table(
+	truthTable.map((row) => ({
+		A: row.inputs[0],
+		B: row.inputs[1],
+		Cin: row.inputs[2],
+		Sum: row.outputs[0],
+		Cout: row.outputs[1]
+	}))
+);
 
-const newCircuit = circuit.simplify();
-console.log(circuit.rootNodes.toString());
-console.log(newCircuit.rootNodes.toString());
-
-function verifyTruthTables(table1, table2) {
-	if (table1.length !== table2.length) {
-		return false; // different number of rows
-	}
-
-	for (let i = 0; i < table1.length; i++) {
-		const row1 = table1[i];
-		const row2 = table2[i];
-
-		// compare inputs
-		if (row1.inputs.join() !== row2.inputs.join()) {
-			console.error(`Mismatch at row ${i}: inputs differ`, row1.inputs, row2.inputs);
-			return false;
-		}
-
-		// compare outputs
-		if (row1.outputs.join() !== row2.outputs.join()) {
-			console.error(`Mismatch at row ${i}: outputs differ`, row1.outputs, row2.outputs);
-			return false;
-		}
-	}
-
-	return true;
-}
-
-// Example usage:
-const tableA = circuit.generateTruthTable();
-
-const tableB = circuit.generateTruthTable();
-
-console.log("Tables Table Vericiation: ", verifyTruthTables(tableA, tableB)); // true
+console.log("\nFull-Adder Structure:");
+console.log(fullAdderCircuit.toString());
