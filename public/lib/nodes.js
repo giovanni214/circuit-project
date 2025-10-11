@@ -1,9 +1,3 @@
-// This file needs the context creator for its toString methods.
-import { createDefaultContext } from "./utils.js";
-
-// ------------------------------
-// 1) Base AST Node
-// ------------------------------
 export class Node {
 	evaluate(circuit, inputs) {
 		throw new Error("evaluate() not implemented for base Node.");
@@ -13,10 +7,6 @@ export class Node {
 		throw new Error("toString() not implemented for base Node.");
 	}
 }
-
-// ------------------------------
-// 2) AST Node Definitions
-// ------------------------------
 
 export class LiteralNode extends Node {
 	constructor(value) {
@@ -36,6 +26,7 @@ export class InputNode extends Node {
 		super();
 		this.index = index;
 	}
+
 	evaluate(circuit, inputs) {
 		return inputs[this.index] ?? 0;
 	}

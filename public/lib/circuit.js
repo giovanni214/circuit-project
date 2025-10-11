@@ -1,5 +1,13 @@
 // Import all the Node types it needs to know about
-import { ClockNode, LiteralNode, InputNode, GateNode, FeedbackNode, CompositeNode, SubCircuitOutputNode } from "./nodes.js";
+import {
+	ClockNode,
+	LiteralNode,
+	InputNode,
+	GateNode,
+	FeedbackNode,
+	CompositeNode,
+	SubCircuitOutputNode
+} from "./nodes.js";
 
 // Import the helper classes and functions
 import { Scheduler } from "./scheduler.js";
@@ -13,12 +21,10 @@ export class Circuit {
 	constructor(name, rootNodes) {
 		this.name = name;
 		this.rootNodes = Array.isArray(rootNodes) ? rootNodes : [rootNodes]; // timing
-
 		this.totalTicks = 0;
 		this.currentTick = 0;
 		this.clock = 0;
 		this.prevClock = 0; // feedback + gates
-
 		this.feedbackNodes = [];
 		this.gateRegistry = {};
 		this.scheduler = new Scheduler();
@@ -27,6 +33,7 @@ export class Circuit {
 
 	setClock(value) {
 		this.prevClock = this.clock;
+
 		this.clock = value;
 	}
 
@@ -84,6 +91,7 @@ export class Circuit {
 
 	evaluate(inputs = [], maxDeltaCycles = 50) {
 		this.currentTick = this.totalTicks;
+
 		const subHistory = [];
 		let oldOutputs = null;
 
@@ -91,7 +99,9 @@ export class Circuit {
 			const queueBefore = [...this.scheduler.events];
 			const events = this.scheduler.consumeEventsForTick(this.currentTick);
 			events.forEach((e) => e.callback());
+
 			this.feedbackNodes.forEach((fb) => fb.computeFeedback(this, inputs));
+
 			const newOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
 			subHistory.push({
 				deltaCycle: iteration,
@@ -100,14 +110,18 @@ export class Circuit {
 				queueAfter: [...this.scheduler.events],
 				outputs: [...newOutputs]
 			});
+
 			const stable = oldOutputs !== null && arraysEqual(oldOutputs, newOutputs);
 			const moreEvents = this.scheduler.hasEventsForTick(this.currentTick);
 			oldOutputs = newOutputs;
+
 			if (stable && !moreEvents) break;
 		}
 
 		this.history.push({ tick: this.totalTicks, subHistory });
+
 		this.totalTicks++;
+
 		return oldOutputs;
 	}
 	tick(inputs = []) {
@@ -135,15 +149,22 @@ export class Circuit {
 			copy = new ClockNode();
 		} else if (node instanceof GateNode) {
 			copy = new GateNode(node.gateType, [], node.delay);
+
 			nodeMap.set(node, copy);
+
 			copy.inputNodes = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
+
 			copy.lastValue = node.lastValue;
+
 			return copy;
 		} else if (node instanceof FeedbackNode) {
 			// THE FIX: Use node.initialValue instead of node.currentValue
 			copy = new FeedbackNode(null, node.initialValue, node.delay, node.name);
+
 			nodeMap.set(node, copy);
+
 			copy.inputNode = this.#cloneNode(node.inputNode, nodeMap);
+
 			return copy;
 		} else if (node instanceof CompositeNode) {
 			const clonedInputs = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
@@ -156,6 +177,7 @@ export class Circuit {
 		}
 
 		nodeMap.set(node, copy);
+
 		return copy;
 	}
 
@@ -171,8 +193,8 @@ export class Circuit {
 		c.history = [];
 		c.totalTicks = this.totalTicks;
 		return c;
-	} 
-	
+	}
+
 	toString() {
 		const lines = [];
 		const context = createDefaultContext();
@@ -287,6 +309,7 @@ export class Circuit {
 		for (let i = 0; i < a.length; i++) {
 			if (a[i] === b[i]) continue;
 			diffs++;
+
 			if (diffs > 1) return diffs;
 		}
 		return diffs;
@@ -344,6 +367,7 @@ export class Circuit {
 				// “don’t care”: each partial forks into a 0‑branch and a 1‑branch
 				for (const seq of results) {
 					nextResults.push([...seq, 0]);
+
 					nextResults.push([...seq, 1]);
 				}
 			} else {
@@ -372,6 +396,7 @@ export class Circuit {
 			const covered = this.#findCoverValues(prime);
 			for (let mKey of covered) {
 				mKey = mKey.join("");
+
 				if (coverMap.has(mKey)) {
 					coverMap.get(mKey).add(pIdx);
 				}
@@ -448,6 +473,7 @@ export class Circuit {
 				for (const covered of this.#findCoverValues(prime)) {
 					if (covered.join("") === mKey) {
 						clause.push(idx);
+
 						break;
 					}
 				}
@@ -514,6 +540,7 @@ export class Circuit {
 			const simplifiedNode = new LiteralNode(0);
 			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
 			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+
 			return simplifiedCircuit;
 		}
 
@@ -526,6 +553,7 @@ export class Circuit {
 			const simplifiedNode = new LiteralNode(1);
 			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
 			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+
 			return simplifiedCircuit;
 		}
 
@@ -548,6 +576,7 @@ export class Circuit {
 		const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedCircuitNode]); // The simplified circuit is in Sum-of-Products form, which only requires // standard AND, OR, and NOT gates.
 
 		simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+
 		return simplifiedCircuit;
 	}
 }
