@@ -16,9 +16,18 @@ class Scheduler {
 	 * consumeEventsForTick: remove and return all events for a given tick
 	 */
 
+	// This can be made more efficient by iterating over the events array only once.
 	consumeEventsForTick(tick) {
-		const ready = this.events.filter((e) => e.targetTick === tick);
-		this.events = this.events.filter((e) => e.targetTick !== tick);
+		const ready = [];
+		const remaining = [];
+		for (const event of this.events) {
+			if (event.targetTick === tick) {
+				ready.push(event);
+			} else {
+				remaining.push(event);
+			}
+		}
+		this.events = remaining;
 		return ready;
 	}
 	/**
@@ -175,12 +184,24 @@ function arraysEqual(a, b) {
 
 // Standard gate implementations for simplification
 const STANDARD_GATES = {
+	/**
+	 * @param {number[]} inputs An array of bits.
+	 * @returns {number} The result of a bitwise OR on all inputs.
+	 */
 	OR: (inputs) => {
 		return inputs.reduce((acc, bit) => acc | bit, 0);
 	},
+	/**
+	 * @param {number[]} inputs An array of bits.
+	 * @returns {number} The result of a bitwise AND on all inputs.
+	 */
 	AND: (inputs) => {
 		return inputs.reduce((acc, bit) => acc & bit, 1);
 	},
+	/**
+	 * @param {number[]} input An array containing a single bit.
+	 * @returns {number} The inverted bit.
+	 */
 	NOT: (input) => {
 		if (input.length !== 1) {
 			throw new Error("NOT gate requires exactly one input");
@@ -353,19 +374,29 @@ class Circuit {
 	} // ----------------------------------------------------- // 4.5) Human-readable toString (using Set to guard recursion) // -----------------------------------------------------
 
 	toString() {
-		const lines = []; // 1) feedbackNodes in order
+		const lines = [];
+		const ctx = createDefaultContext();
 
+		// 1) Print feedback node expressions first.
+		// This ensures that when root nodes are printed, feedback loops
+		// are represented by their names (e.g., "feedbackFrom(Q)")
+		// instead of re-printing the whole expression.
 		for (let i = 0; i < this.feedbackNodes.length; i++) {
 			const fb = this.feedbackNodes[i];
-			const ctx = createDefaultContext(); // pre‑mark every feedback node printed *before* this one
-
+			const fbCtx = createDefaultContext();
+			// Pre-mark every feedback node printed *before* this one
 			for (let j = 0; j < i; j++) {
-				ctx.visited.add(this.feedbackNodes[j]);
-			} // now toString will inline THIS fb, but will render any earlier fb as feedbackFrom(...)
+				fbCtx.visited.add(this.feedbackNodes[j]);
+			}
+			lines.push(fb.toString(fbCtx));
+			// Mark all feedback nodes as visited for the root node pass.
+			ctx.visited.add(fb);
+		}
 
-			lines.push(fb.toString(ctx));
-		} // 2) (optional) if you have non‑feedback outputs, do the same trick: // for (const node of this.rootNodes) { ... }
-
+		// 2) Print root node expressions (the circuit's outputs).
+		this.rootNodes.forEach((node, i) => {
+			lines.push(`Output[${i}] = ${node.toString(ctx)}`);
+		});
 		return lines.join("\n");
 	}
 
@@ -380,11 +411,11 @@ class Circuit {
 	generateTruthTable() {
 		let truthTable = [];
 		const n = this.inputLength;
-		const combinations = 1 << n; //Generate all possible inputs and put them into an array
+		const combinations = 1 << n; // 2^n
 
 		for (let i = 0; i < combinations; i++) {
 			const inputs = this.#numToBitArray(i, n);
-			const outputs = this.evaluate(inputs);
+			const outputs = this.clone().evaluate(inputs); // Use a clone to not affect original circuit state
 			truthTable.push({ inputs, outputs });
 		}
 
@@ -638,49 +669,61 @@ class Circuit {
 			.join("·");
 	} //Simplifying using Quine–McCluskey algorithm
 
-	simplify() {
+	/**
+	 * Simplifies the circuit logic for each output using the Quine-McCluskey algorithm.
+	 * Note: This only works for combinational logic and for the first output.
+	 * @returns {Circuit} A new, simplified Circuit instance.
+	 */
+	simplify(outputIndex = 0) {
+		if (outputIndex >= this.outputLength) {
+			throw new Error(`Output index ${outputIndex} is out of bounds.`);
+		}
+
+		// The simplification process can modify the circuit's state (e.g., history).
+		// We operate on a clone to keep the original circuit pristine.
+		const circuitToSimplify = this.clone();
+
 		const truthTable = this.generateTruthTable();
-		const minterms = this.#generateMinterms(truthTable, 0);
+		const minterms = this.#generateMinterms(truthTable, outputIndex);
+
+		// If there are no minterms, the output is always 0.
+		if (minterms.length === 0) {
+			const simplifiedNode = new LiteralNode(0);
+			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
+			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+			return simplifiedCircuit;
+		}
+
 		const primes = this.#findPrimeImplicants(minterms);
 		const bestPrimes = this.#petrickMethod(minterms, primes);
 
-		let a = bestPrimes.map((p) => this.#formatImplicant(p));
+		// If there are no prime implicants but there are minterms, it implies the output is always 1.
+		// This happens if the prime implicant list reduces to a single term of all "don't cares".
+		if (bestPrimes.length === 0 && minterms.length > 0) {
+			const simplifiedNode = new LiteralNode(1);
+			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
+			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+			return simplifiedCircuit;
+		}
+
 		const inputNodes = Array.from({ length: this.inputLength }, (_, i) => new InputNode(i));
 
 		const andGates = bestPrimes.map((prime) => {
-			const inputsForAnd = prime
-				.map((bit, i) => {
-					if (bit === 0) {
-						return new GateNode("NOT", [inputNodes[i]]);
-					} else if (bit === 1) {
-						return inputNodes[i];
-					}
-					return null; // Don't care, so don't include in AND
-				})
-				.filter(Boolean); // Remove nulls
+			const inputsForAnd = [];
+			prime.forEach((bit, i) => {
+				if (bit === 0) inputsForAnd.push(new GateNode("NOT", [inputNodes[i]]));
+				else if (bit === 1) inputsForAnd.push(inputNodes[i]);
+			});
 
-			if (inputsForAnd.length === 0) {
-				// If a prime is all don't cares (e.g., "- - -"), it means the output is always 1.
-				// This case should ideally be handled earlier or result in a single LiteralNode(1).
-				// For now, we'll represent it as a constant 1.
-				return new LiteralNode(1);
-			}
-			if (inputsForAnd.length === 1) {
-				return inputsForAnd[0]; // If only one input, the AND gate is just that input
-			}
+			if (inputsForAnd.length === 1) return inputsForAnd[0];
 			return new GateNode("AND", inputsForAnd);
 		});
 
-		let simplifiedCircuitNode;
-		if (andGates.length === 0) {
-			simplifiedCircuitNode = new LiteralNode(0); // No minterms, output is always 0
-		} else if (andGates.length === 1) {
-			simplifiedCircuitNode = andGates[0];
-		} else {
-			simplifiedCircuitNode = new GateNode("OR", andGates);
-		} // Create the new circuit with the simplified node structure.
+		const simplifiedCircuitNode = andGates.length === 1 ? andGates[0] : new GateNode("OR", andGates);
 
+		// Create the new circuit with the simplified node structure.
 		const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedCircuitNode]); // The simplified circuit is in Sum-of-Products form, which only requires // standard AND, OR, and NOT gates.
+
 		simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
 		return simplifiedCircuit;
 	}

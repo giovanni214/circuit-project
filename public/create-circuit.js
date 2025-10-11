@@ -18,6 +18,42 @@ function NOT_FUNC(input) {
 	return input[0] ? 0 : 1;
 }
 
+/**
+ * Creates a master-slave D flip-flop circuit.
+ * This is a negative-edge-triggered flip-flop.
+ * @returns {Circuit} A new Circuit instance representing the D flip-flop.
+ */
+function createDFlipFlop() {
+	// Inputs: D (Data) at index 0, CLK (Clock) at index 1
+	const D = new InputNode(0);
+	const CLK = new ClockNode(); // Using a dedicated ClockNode
+
+	// Internal feedback nodes for the master and slave latches
+	const masterQ = new FeedbackNode(null, 0, 0, "masterQ");
+	const slaveQ = new FeedbackNode(null, 0, 0, "slaveQ");
+
+	// Master Latch Logic (transparent when CLK is HIGH)
+	// masterQ_next = (D AND CLK) OR (masterQ AND NOT CLK)
+	const notCLK = new GateNode("NOT", [CLK]);
+	const masterTerm1 = new GateNode("AND", [D, CLK]);
+	const masterTerm2 = new GateNode("AND", [masterQ, notCLK]);
+	const masterQNext = new GateNode("OR", [masterTerm1, masterTerm2]);
+	masterQ.inputNode = masterQNext; // Wire up the feedback
+
+	// Slave Latch Logic (transparent when CLK is LOW)
+	// slaveQ_next = (masterQ AND NOT CLK) OR (slaveQ AND CLK)
+	const slaveTerm1 = new GateNode("AND", [masterQ, notCLK]);
+	const slaveTerm2 = new GateNode("AND", [slaveQ, CLK]);
+	const slaveQNext = new GateNode("OR", [slaveTerm1, slaveTerm2]);
+	slaveQ.inputNode = slaveQNext; // Wire up the feedback
+
+	// Create the circuit with slaveQ as the final output
+	const dff = new Circuit("D-Flip-Flop", [slaveQ]);
+	dff.registerFeedbackNode(masterQ);
+	dff.registerFeedbackNode(slaveQ);
+	return dff;
+}
+
 const a = new InputNode(0);
 const b = new InputNode(1);
 const c = new InputNode(2);
