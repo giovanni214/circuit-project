@@ -93,48 +93,75 @@ export class Circuit {
 		}
 		return highest < 0 ? 0 : highest + 1;
 	}
+
 	get outputLength() {
 		return this.rootNodes.length;
-	} // ----------------------------------------------------- // 4.3) Evaluate & Tick (Multi-Delta Implementation) // -----------------------------------------------------
+	}
+
+	// ... inside the Circuit class in circuit.js ...
+
+	// ... inside the Circuit class in circuit.js ...
 
 	evaluate(inputs = [], maxDeltaCycles = 50) {
 		this.currentTick = this.totalTicks;
-
 		const subHistory = [];
-		let oldOutputs = null;
 
-		for (let iteration = 1; iteration <= maxDeltaCycles; iteration++) {
-			const queueBefore = [...this.scheduler.events];
-			const events = this.scheduler.consumeEventsForTick(this.currentTick);
-			events.forEach((e) => e.callback());
+		// --- 1. Perform a single, initial evaluation to get a baseline state. ---
+		// This is always necessary and will be our only step if the circuit is stable.
+		let iteration = 1;
+		const queueBefore = [...this.scheduler.events];
+		const events = this.scheduler.consumeEventsForTick(this.currentTick);
+		events.forEach((e) => e.callback());
+		this.feedbackNodes.forEach((fb) => fb.computeFeedback(this, inputs));
+		let oldOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
 
+		subHistory.push({
+			deltaCycle: iteration,
+			queueBefore,
+			consumedEvents: events,
+			queueAfter: [...this.scheduler.events],
+			outputs: [...oldOutputs]
+		});
+
+		// --- 2. Only continue looping if the circuit is not yet stable. ---
+		// This loop will not run at all if the initial state is already stable.
+		while (this.scheduler.hasEventsForTick(this.currentTick) && iteration < maxDeltaCycles) {
+			iteration++;
+			const queueBeforeLoop = [...this.scheduler.events];
+			const eventsLoop = this.scheduler.consumeEventsForTick(this.currentTick);
+			eventsLoop.forEach((e) => e.callback());
 			this.feedbackNodes.forEach((fb) => fb.computeFeedback(this, inputs));
 
 			const newOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
+
 			subHistory.push({
 				deltaCycle: iteration,
-				queueBefore,
-				consumedEvents: events,
+				queueBefore: queueBeforeLoop,
+				consumedEvents: eventsLoop,
 				queueAfter: [...this.scheduler.events],
 				outputs: [...newOutputs]
 			});
 
-			const stable = oldOutputs !== null && arraysEqual(oldOutputs, newOutputs);
-			const moreEvents = this.scheduler.hasEventsForTick(this.currentTick);
+			// If the outputs stop changing, we can exit.
+			if (arraysEqual(oldOutputs, newOutputs)) {
+				break;
+			}
 			oldOutputs = newOutputs;
-
-			if (stable && !moreEvents) break;
 		}
 
 		this.history.push({ tick: this.totalTicks, subHistory });
-
 		this.totalTicks++;
-
 		return oldOutputs;
 	}
+
+	// ... rest of the Circuit class ...
+
+	// ... rest of the Circuit class ...
+
 	tick(inputs = []) {
 		return this.evaluate(inputs);
 	}
+
 	evaluateUntilStable(inputs = [], maxOuter = 100) {
 		let old = null;
 		for (let i = 0; i < maxOuter; i++) {
@@ -156,7 +183,7 @@ export class Circuit {
 		} else if (node instanceof ClockNode) {
 			copy = new ClockNode();
 		} else if (node instanceof GateNode) {
-			copy = new GateNode(node.gateType, [], node.delay);
+			copy = new GateNode(node.gateType, [], node.delay, node.name);
 
 			nodeMap.set(node, copy);
 
@@ -226,39 +253,6 @@ export class Circuit {
 			.padStart(width, "0")
 			.split("")
 			.map((bit) => +bit);
-	}
-
-	/**
-	 * Runs a step-by-step simulation on the circuit.
-	 * @param {Array<Object>} steps - An array of simulation steps.
-	 * Each step is an object, e.g., { inputs: [0], clock: 0 }
-	 * @returns {Array<Object>} An array containing the history of the simulation.
-	 */
-	runSimulation(steps) {
-		const history = [];
-		// Start with a single, fresh clone for the entire simulation.
-		const simCircuit = this.clone();
-
-		steps.forEach((step, stepIndex) => {
-			// Set the clock for the current step, if specified.
-			if (step.clock !== undefined) {
-				simCircuit.setClock(step.clock);
-			}
-
-			// Evaluate the circuit with the inputs for this step.
-			// The `tick` method correctly advances the internal simulation time.
-			const outputs = simCircuit.tick(step.inputs);
-
-			// Record the complete state for this step.
-			history.push({
-				step: stepIndex + 1,
-				inputs: step.inputs,
-				clock: simCircuit.getClock(),
-				outputs: [...outputs] // Make a copy of the output array
-			});
-		});
-
-		return history;
 	}
 
 	generateTruthTable(clockLevel = null) {

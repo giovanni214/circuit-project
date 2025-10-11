@@ -6,8 +6,8 @@ export class Scheduler {
 	 * scheduleEvent: queue a callback to run at targetTick
 	 */
 
-	scheduleEvent(targetTick, callback) {
-		this.events.push({ targetTick, callback });
+	scheduleEvent(targetTick, callback, description = "event") {
+		this.events.push({ targetTick, callback, description });
 	}
 	/**
 	 * consumeEventsForTick: remove and return all events for a given tick

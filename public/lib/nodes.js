@@ -45,12 +45,13 @@ export class ClockNode extends Node {
 }
 
 export class GateNode extends Node {
-	constructor(gateType, inputNodes, delay = 0) {
+	constructor(gateType, inputNodes, delay = 0, name) {
 		super();
 		this.gateType = gateType;
 		this.inputNodes = inputNodes;
 		this.delay = delay;
 		this.lastValue = 0;
+		this.name = name || `${gateType}_${Math.random().toString(36).substr(2, 5)}`; // Assign a random ID if no name is given
 	}
 	evaluate(circuit, inputs) {
 		const gateFunc = circuit.getGate(this.gateType);
@@ -61,9 +62,14 @@ export class GateNode extends Node {
 		const newValue = gateFunc(childVals);
 		if (this.delay > 0) {
 			const targetTick = circuit.currentTick + this.delay;
-			circuit.scheduler.scheduleEvent(targetTick, () => {
-				this.lastValue = newValue;
-			});
+			const description = `Update gate '${this.name}' to value ${newValue}`;
+			circuit.scheduler.scheduleEvent(
+				targetTick,
+				() => {
+					this.lastValue = newValue;
+				},
+				description
+			);
 			return this.lastValue;
 		} else {
 			this.lastValue = newValue;
@@ -172,9 +178,14 @@ export class FeedbackNode extends Node {
 		const newValue = this.inputNode.evaluate(circuit, inputs);
 		if (this.delay > 0) {
 			const targetTick = circuit.currentTick + this.delay;
-			circuit.scheduler.scheduleEvent(targetTick, () => {
-				this.currentValue = newValue;
-			});
+			const description = `Update gate '${this.name}' to value ${newValue}`;
+			circuit.scheduler.scheduleEvent(
+				targetTick,
+				() => {
+					this.currentValue = newValue;
+				},
+				description
+			);
 		} else {
 			this.currentValue = newValue;
 		}
