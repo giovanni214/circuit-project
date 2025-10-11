@@ -83,6 +83,7 @@ fullAdderCircuit.registerGate("NOT", (inputs) => {
 // --- 3. Verification ---
 console.log("Full-Adder Truth Table:");
 const truthTable = fullAdderCircuit.generateTruthTable();
+window.circuit = fullAdderCircuit;
 console.table(
 	truthTable.map((row) => ({
 		A: row.inputs[0],

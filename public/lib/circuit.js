@@ -62,7 +62,7 @@ export class Circuit {
 	} // ----------------------------------------------------- // 4.2) Compute inputLength & outputLength // -----------------------------------------------------
 
 	#computeInputLength(node, visited = new Set()) {
-		if (visited.has(node)) return -Infinity;
+		if (!node || visited.has(node)) return -Infinity;
 		visited.add(node);
 
 		let highest = -1;
@@ -73,7 +73,15 @@ export class Circuit {
 				highest = Math.max(highest, this.#computeInputLength(child, visited));
 			}
 		} else if (node instanceof FeedbackNode) {
-			highest = Math.max(highest, this.#computeInputLength(node.inputNode, visited));
+			if (node.inputNode) {
+				highest = Math.max(highest, this.#computeInputLength(node.inputNode, visited));
+			}
+		} else if (node instanceof CompositeNode) {
+			for (const child of node.inputNodes) {
+				highest = Math.max(highest, this.#computeInputLength(child, visited));
+			}
+		} else if (node instanceof SubCircuitOutputNode) {
+			highest = Math.max(highest, this.#computeInputLength(node.compositeNode, visited));
 		}
 		return highest;
 	}
@@ -519,63 +527,53 @@ export class Circuit {
 	}
 
 	/**
-	 * Simplifies the circuit logic for each output using the Quine-McCluskey algorithm.
-	 * Note: This only works for combinational logic and for the first output.
-	 * @returns {Circuit} A new, simplified Circuit instance.
+	 * Simplifies the logic for EACH output of the circuit using the Quine-McCluskey algorithm.
+	 * Note: This only works for combinational logic.
+	 * @returns {Circuit} A new, fully simplified Circuit instance with the same number of outputs.
 	 */
-	simplify(outputIndex = 0) {
-		if (outputIndex >= this.outputLength) {
-			throw new Error(`Output index ${outputIndex} is out of bounds.`);
-		}
+	simplify() {
+		const simplifiedNodes = [];
 
-		// The simplification process can modify the circuit's state (e.g., history).
-		// We operate on a clone to keep the original circuit pristine.
-		const circuitToSimplify = this.clone();
+		// Loop through each output of the original circuit.
+		for (let i = 0; i < this.outputLength; i++) {
+			const truthTable = this.generateTruthTable();
+			const minterms = this.#generateMinterms(truthTable, i);
 
-		const truthTable = this.generateTruthTable();
-		const minterms = this.#generateMinterms(truthTable, outputIndex);
+			// Handle cases where the output is always 0 or always 1.
+			if (minterms.length === 0) {
+				simplifiedNodes.push(new LiteralNode(0));
+				continue;
+			}
+			const combinations = 1 << this.inputLength;
+			if (minterms.length === combinations) {
+				simplifiedNodes.push(new LiteralNode(1));
+				continue;
+			}
 
-		// If there are no minterms, the output is always 0.
-		if (minterms.length === 0) {
-			const simplifiedNode = new LiteralNode(0);
-			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
-			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+			const primes = this.#findPrimeImplicants(minterms);
+			const bestPrimes = this.#petrickMethod(minterms, primes);
 
-			return simplifiedCircuit;
-		}
+			const inputNodes = Array.from({ length: this.inputLength }, (_, i) => new InputNode(i));
 
-		const primes = this.#findPrimeImplicants(minterms);
-		const bestPrimes = this.#petrickMethod(minterms, primes);
-
-		// If there are no prime implicants but there are minterms, it implies the output is always 1.
-		// This happens if the prime implicant list reduces to a single term of all "don't cares".
-		if (bestPrimes.length === 0 && minterms.length > 0) {
-			const simplifiedNode = new LiteralNode(1);
-			const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedNode]);
-			simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
-
-			return simplifiedCircuit;
-		}
-
-		const inputNodes = Array.from({ length: this.inputLength }, (_, i) => new InputNode(i));
-
-		const andGates = bestPrimes.map((prime) => {
-			const inputsForAnd = [];
-			prime.forEach((bit, i) => {
-				if (bit === 0) inputsForAnd.push(new GateNode("NOT", [inputNodes[i]]));
-				else if (bit === 1) inputsForAnd.push(inputNodes[i]);
+			const andGates = bestPrimes.map((prime) => {
+				const inputsForAnd = [];
+				prime.forEach((bit, j) => {
+					if (bit === 0) inputsForAnd.push(new GateNode("NOT", [inputNodes[j]]));
+					else if (bit === 1) inputsForAnd.push(inputNodes[j]);
+				});
+				if (inputsForAnd.length === 1) return inputsForAnd[0];
+				return new GateNode("AND", inputsForAnd);
 			});
 
-			if (inputsForAnd.length === 1) return inputsForAnd[0];
-			return new GateNode("AND", inputsForAnd);
-		});
+			const simplifiedNode = andGates.length === 1 ? andGates[0] : new GateNode("OR", andGates);
+			simplifiedNodes.push(simplifiedNode);
+		}
 
-		const simplifiedCircuitNode = andGates.length === 1 ? andGates[0] : new GateNode("OR", andGates);
-
-		// Create the new circuit with the simplified node structure.
-		const simplifiedCircuit = new Circuit(`${this.name}_simplified`, [simplifiedCircuitNode]); // The simplified circuit is in Sum-of-Products form, which only requires // standard AND, OR, and NOT gates.
-
-		simplifiedCircuit.gateRegistry = { ...STANDARD_GATES };
+		// Create the new circuit with all the simplified output nodes.
+		const simplifiedCircuit = new Circuit(`${this.name}_simplified`, simplifiedNodes);
+		simplifiedCircuit.registerGate("AND", STANDARD_GATES.AND);
+		simplifiedCircuit.registerGate("OR", STANDARD_GATES.OR);
+		simplifiedCircuit.registerGate("NOT", STANDARD_GATES.NOT);
 
 		return simplifiedCircuit;
 	}
