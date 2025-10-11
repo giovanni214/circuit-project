@@ -1,310 +1,12 @@
-// ===========================
-// 1) Event Scheduler
-// ===========================
-class Scheduler {
-	constructor() {
-		this.events = [];
-	}
-	/**
-	 * scheduleEvent: queue a callback to run at targetTick
-	 */
+// Import all the Node types it needs to know about
+import { ClockNode, LiteralNode, InputNode, GateNode, FeedbackNode, CompositeNode, SubCircuitOutputNode } from "./nodes.js";
 
-	scheduleEvent(targetTick, callback) {
-		this.events.push({ targetTick, callback });
-	}
-	/**
-	 * consumeEventsForTick: remove and return all events for a given tick
-	 */
+// Import the helper classes and functions
+import { Scheduler } from "./scheduler.js";
+import { arraysEqual, createDefaultContext } from "./utils.js"; // Assuming arraysEqual is in utils.js
+import { STANDARD_GATES } from "./common-gates.js";
 
-	// This can be made more efficient by iterating over the events array only once.
-	consumeEventsForTick(tick) {
-		const ready = [];
-		const remaining = [];
-		for (const event of this.events) {
-			if (event.targetTick === tick) {
-				ready.push(event);
-			} else {
-				remaining.push(event);
-			}
-		}
-		this.events = remaining;
-		return ready;
-	}
-	/**
-	 * hasEventsForTick: does at least one event remain for this tick?
-	 */
-
-	hasEventsForTick(tick) {
-		return this.events.some((e) => e.targetTick === tick);
-	}
-}
-
-// ------------------------------
-// Utility: Context & Circular Reference Check
-// ------------------------------
-function createDefaultContext() {
-	return {
-		visited: new Set()
-	};
-}
-
-// ------------------------------
-// 1) Base AST Node
-// ------------------------------
-class Node {
-	evaluate(circuit, inputs) {
-		throw new Error("evaluate() not implemented for base Node.");
-	}
-	toString(context = createDefaultContext()) {
-		throw new Error("toString() not implemented for base Node.");
-	}
-}
-
-// ------------------------------
-// 2) AST Node Definitions
-// ------------------------------
-
-class LiteralNode extends Node {
-	constructor(value) {
-		super();
-		this.value = value;
-	}
-	evaluate(circuit, inputs) {
-		return this.value;
-	}
-	toString(context = createDefaultContext()) {
-		return `${this.value}`;
-	}
-}
-
-class InputNode extends Node {
-	constructor(index) {
-		super();
-		this.index = index;
-	}
-	evaluate(circuit, inputs) {
-		return inputs[this.index] ?? 0;
-	}
-	toString(context = createDefaultContext()) {
-		return String.fromCharCode(65 + this.index); // A, B, C...
-	}
-}
-
-class ClockNode extends Node {
-	evaluate(circuit, inputs) {
-		return circuit.clock;
-	}
-	toString(context = createDefaultContext()) {
-		return "CLK";
-	}
-}
-
-class GateNode extends Node {
-	constructor(gateType, inputNodes, delay = 0) {
-		super();
-		this.gateType = gateType;
-		this.inputNodes = inputNodes;
-		this.delay = delay;
-		this.lastValue = 0;
-	}
-	evaluate(circuit, inputs) {
-		const gateFunc = circuit.getGate(this.gateType);
-		if (typeof gateFunc !== "function") {
-			throw new Error(`Gate "${this.gateType}" is not registered.`);
-		}
-		const childVals = this.inputNodes.map((n) => n.evaluate(circuit, inputs));
-		const newValue = gateFunc(childVals);
-		if (this.delay > 0) {
-			const targetTick = circuit.currentTick + this.delay;
-			circuit.scheduler.scheduleEvent(targetTick, () => {
-				this.lastValue = newValue;
-			});
-			return this.lastValue;
-		} else {
-			this.lastValue = newValue;
-			return newValue;
-		}
-	}
-	toString(context = createDefaultContext()) {
-		if (context.visited.has(this)) {
-			return ""; // break recursion
-		}
-		context.visited.add(this);
-		const childStrs = this.inputNodes.map((child) => child.toString(context));
-		if (childStrs.length === 1) {
-			return `${this.gateType}(${childStrs[0]})`;
-		}
-
-		return `(${childStrs.join(` ${this.gateType.toUpperCase()} `)})`;
-	}
-}
-
-// ... inside circuit-logic.js
-// Replace the old CompositeNode with this updated version.
-
-class CompositeNode extends Node {
-	constructor(subCircuit, inputNodes) {
-		super();
-		if (!(subCircuit instanceof Circuit)) {
-			throw new Error("CompositeNode requires a valid Circuit instance.");
-		}
-		this.subCircuit = subCircuit.clone();
-		this.inputNodes = inputNodes;
-
-		if (this.inputNodes.length !== this.subCircuit.inputLength) {
-			throw new Error(
-				`Input mismatch: The sub-circuit "${this.subCircuit.name}" expects ${this.subCircuit.inputLength} inputs, but was provided ${this.inputNodes.length}.`
-			);
-		}
-
-		// Cache to store the results for the current tick
-		this.lastEvaluationTick = -1;
-		this.cachedOutputs = [];
-	}
-
-	evaluate(parentCircuit, parentInputs) {
-		// If we've already evaluated this sub-circuit during the current tick, return the cached result.
-		if (this.lastEvaluationTick === parentCircuit.currentTick) {
-			return this.cachedOutputs;
-		}
-
-		const subCircuitInputs = this.inputNodes.map((node) => node.evaluate(parentCircuit, parentInputs));
-
-		// --- START DEBUGGING ADDITION ---
-		console.log("--- Debugging CompositeNode ---");
-		console.log("Sub-circuit object:", this.subCircuit);
-		console.log("Is 'evaluateUntilStable' a function?", typeof this.subCircuit.evaluateUntilStable);
-		// --- END DEBUGGING ADDITION ---
-
-		// This is the line that causes the error
-		this.cachedOutputs = this.subCircuit.evaluateUntilStable(subCircuitInputs);
-		this.lastEvaluationTick = parentCircuit.currentTick; // Mark as evaluated for this tick.
-
-		return this.cachedOutputs;
-	}
-
-	toString(context = createDefaultContext()) {
-		if (context.visited.has(this)) {
-			return `...recursion...`;
-		}
-		context.visited.add(this);
-
-		const childStrs = this.inputNodes.map((child) => child.toString(context));
-		return `${this.subCircuit.name}(${childStrs.join(", ")})`;
-	}
-}
-
-// ==========================================================
-// NEW: Node for selecting a specific output from a CompositeNode
-// ==========================================================
-class SubCircuitOutputNode extends Node {
-	/**
-	 * @param {CompositeNode} compositeNode - The composite node to tap into.
-	 * @param {number} outputIndex - The index of the output to select from the sub-circuit.
-	 */
-	constructor(compositeNode, outputIndex) {
-		super();
-		if (!(compositeNode instanceof CompositeNode)) {
-			throw new Error("SubCircuitOutputNode requires a CompositeNode as its input.");
-		}
-		this.compositeNode = compositeNode;
-		this.outputIndex = outputIndex;
-	}
-
-	evaluate(parentCircuit, parentInputs) {
-		// This triggers the evaluation of the composite node if it hasn't run yet for this tick.
-		// The result is then retrieved from the composite node's cache.
-		const subCircuitOutputs = this.compositeNode.evaluate(parentCircuit, parentInputs);
-
-		if (this.outputIndex >= subCircuitOutputs.length) {
-			throw new Error(
-				`Output index ${this.outputIndex} is out of bounds for sub-circuit "${this.compositeNode.subCircuit.name}".`
-			);
-		}
-
-		return subCircuitOutputs[this.outputIndex];
-	}
-
-	toString(context = createDefaultContext()) {
-		return `${this.compositeNode.toString(context)}[${this.outputIndex}]`;
-	}
-}
-
-class FeedbackNode extends Node {
-	constructor(inputNode, initialValue = 0, delay = 0, name = "Q") {
-		super();
-		this.inputNode = inputNode;
-		this.currentValue = initialValue;
-		this.delay = delay;
-		this.name = name;
-	}
-	evaluate(circuit, inputs) {
-		return this.currentValue;
-	}
-	computeFeedback(circuit, inputs) {
-		const newValue = this.inputNode.evaluate(circuit, inputs);
-		if (this.delay > 0) {
-			const targetTick = circuit.currentTick + this.delay;
-			circuit.scheduler.scheduleEvent(targetTick, () => {
-				this.currentValue = newValue;
-			});
-		} else {
-			this.currentValue = newValue;
-		}
-	}
-	toString(context = createDefaultContext()) {
-		if (context.visited.has(this)) {
-			return `feedbackFrom(${this.name})`;
-		}
-		context.visited.add(this);
-		const expr = this.inputNode.toString(context);
-		return `${this.name} = ${expr}`;
-	}
-}
-
-// ===========================
-// 3) Utility: arraysEqual
-// ===========================
-function arraysEqual(a, b) {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
-}
-
-// Standard gate implementations for simplification
-const STANDARD_GATES = {
-	/**
-	 * @param {number[]} inputs An array of bits.
-	 * @returns {number} The result of a bitwise OR on all inputs.
-	 */
-	OR: (inputs) => {
-		return inputs.reduce((acc, bit) => acc | bit, 0);
-	},
-	/**
-	 * @param {number[]} inputs An array of bits.
-	 * @returns {number} The result of a bitwise AND on all inputs.
-	 */
-	AND: (inputs) => {
-		return inputs.reduce((acc, bit) => acc & bit, 1);
-	},
-	/**
-	 * @param {number[]} input An array containing a single bit.
-	 * @returns {number} The inverted bit.
-	 */
-	NOT: (input) => {
-		if (input.length !== 1) {
-			throw new Error("NOT gate requires exactly one input");
-		}
-		return input[0] ? 0 : 1;
-	}
-};
-
-// ===========================
-// 4) The Circuit Class
-// ===========================
-class Circuit {
+export class Circuit {
 	/**
 	 * rootNodes can be a single Node or an array of Node objects.
 	 */
@@ -438,17 +140,15 @@ class Circuit {
 			copy.lastValue = node.lastValue;
 			return copy;
 		} else if (node instanceof FeedbackNode) {
-			copy = new FeedbackNode(null, node.currentValue, node.delay, node.name);
+			// THE FIX: Use node.initialValue instead of node.currentValue
+			copy = new FeedbackNode(null, node.initialValue, node.delay, node.name);
 			nodeMap.set(node, copy);
 			copy.inputNode = this.#cloneNode(node.inputNode, nodeMap);
 			return copy;
 		} else if (node instanceof CompositeNode) {
-			// The sub-circuit is already cloned in the constructor, so we just need to clone the input connections.
 			const clonedInputs = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
 			copy = new CompositeNode(node.subCircuit, clonedInputs);
 		} else if (node instanceof SubCircuitOutputNode) {
-			// First, get the clone of the CompositeNode this node points to.
-			// This is crucial for wiring up the new circuit correctly.
 			const clonedCompositeNode = this.#cloneNode(node.compositeNode, nodeMap);
 			copy = new SubCircuitOutputNode(clonedCompositeNode, node.outputIndex);
 		} else {
@@ -471,32 +171,22 @@ class Circuit {
 		c.history = [];
 		c.totalTicks = this.totalTicks;
 		return c;
-	} // ----------------------------------------------------- // 4.5) Human-readable toString (using Set to guard recursion) // -----------------------------------------------------
-
+	} 
+	
 	toString() {
 		const lines = [];
-		const ctx = createDefaultContext();
+		const context = createDefaultContext();
 
-		// 1) Print feedback node expressions first.
-		// This ensures that when root nodes are printed, feedback loops
-		// are represented by their names (e.g., "feedbackFrom(Q)")
-		// instead of re-printing the whole expression.
-		for (let i = 0; i < this.feedbackNodes.length; i++) {
-			const fb = this.feedbackNodes[i];
-			const fbCtx = createDefaultContext();
-			// Pre-mark every feedback node printed *before* this one
-			for (let j = 0; j < i; j++) {
-				fbCtx.visited.add(this.feedbackNodes[j]);
-			}
-			lines.push(fb.toString(fbCtx));
-			// Mark all feedback nodes as visited for the root node pass.
-			ctx.visited.add(fb);
-		}
-
-		// 2) Print root node expressions (the circuit's outputs).
-		this.rootNodes.forEach((node, i) => {
-			lines.push(`Output[${i}] = ${node.toString(ctx)}`);
+		// First, handle the definitions of any feedback nodes to populate the cache.
+		this.feedbackNodes.forEach((fb) => {
+			lines.push(fb.toString(context));
 		});
+
+		// Now, process the main output root nodes.
+		this.rootNodes.forEach((node, i) => {
+			lines.push(`Output[${i}] = ${node.toString(context)}`);
+		});
+
 		return lines.join("\n");
 	}
 
@@ -508,15 +198,59 @@ class Circuit {
 			.map((bit) => +bit);
 	}
 
-	generateTruthTable() {
-		let truthTable = [];
+	/**
+	 * Runs a step-by-step simulation on the circuit.
+	 * @param {Array<Object>} steps - An array of simulation steps.
+	 * Each step is an object, e.g., { inputs: [0], clock: 0 }
+	 * @returns {Array<Object>} An array containing the history of the simulation.
+	 */
+	runSimulation(steps) {
+		const history = [];
+		// Start with a single, fresh clone for the entire simulation.
+		const simCircuit = this.clone();
+
+		steps.forEach((step, stepIndex) => {
+			// Set the clock for the current step, if specified.
+			if (step.clock !== undefined) {
+				simCircuit.setClock(step.clock);
+			}
+
+			// Evaluate the circuit with the inputs for this step.
+			// The `tick` method correctly advances the internal simulation time.
+			const outputs = simCircuit.tick(step.inputs);
+
+			// Record the complete state for this step.
+			history.push({
+				step: stepIndex + 1,
+				inputs: step.inputs,
+				clock: simCircuit.getClock(),
+				outputs: [...outputs] // Make a copy of the output array
+			});
+		});
+
+		return history;
+	}
+
+	generateTruthTable(clockLevel = null) {
+		const truthTable = [];
 		const n = this.inputLength;
-		const combinations = 1 << n; // 2^n
+		const combinations = 1 << n;
 
 		for (let i = 0; i < combinations; i++) {
 			const inputs = this.#numToBitArray(i, n);
-			const outputs = this.clone().evaluate(inputs); // Use a clone to not affect original circuit state
-			truthTable.push({ inputs, outputs });
+			// A fresh, stateless clone is created for each row to ensure isolation.
+			const testCircuit = this.clone();
+			let finalOutputs;
+
+			// If a clock level is specified, set it on the clone before evaluating.
+			if (clockLevel === 0 || clockLevel === 1) {
+				testCircuit.setClock(clockLevel);
+			}
+
+			// A single, stateless evaluation is performed.
+			finalOutputs = testCircuit.evaluate(inputs);
+
+			truthTable.push({ inputs, outputs: finalOutputs });
 		}
 
 		return truthTable;
@@ -757,17 +491,6 @@ class Circuit {
 
 		return finalPrimes;
 	}
-
-	#formatImplicant(bits) {
-		return bits
-			.map((bit, i) => {
-				if (bit === "-") return "";
-				const name = String.fromCharCode(65 + i); // A, B, C...
-				return bit === 1 ? name : `¬${name}`;
-			})
-			.filter(Boolean)
-			.join("·");
-	} //Simplifying using Quine–McCluskey algorithm
 
 	/**
 	 * Simplifies the circuit logic for each output using the Quine-McCluskey algorithm.
