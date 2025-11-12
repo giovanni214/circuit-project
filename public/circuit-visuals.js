@@ -1,6 +1,10 @@
 // / @ts-check
 /// <reference path="../node_modules/@types/p5/global.d.ts" />
 
+import {Circuit} from "./lib/circuit.js";
+import { InputNode, GateNode } from "./lib/nodes.js";
+import {STANDARD_GATES} from "./lib/common-gates.js";
+
 // Global variables for grid & zoom
 let offsetX = 0;
 let offsetY = 0;
@@ -336,11 +340,11 @@ function setup() {
 
 	const XOR_Gate = new Circuit("XOR", [xor_output]);
 
-	XOR_Gate.registerGate("OR", OR_FUNC);
-	XOR_Gate.registerGate("NOT", NOT_FUNC);
-	XOR_Gate.registerGate("AND", AND_FUNC);
+	XOR_Gate.registerGate("OR", STANDARD_GATES["OR"]);
+	XOR_Gate.registerGate("NOT", STANDARD_GATES["NOT"]);
+	XOR_Gate.registerGate("AND", STANDARD_GATES["AND"]);
 
-  console.log(XOR_Gate.rootNodes[0].toString());
+	console.log(XOR_Gate.rootNodes[0].toString());
 	shapes.push(new CircuitShape(width / 2, height / 2, 200, XOR_Gate));
 }
 
@@ -545,3 +549,12 @@ function mouseWheel(event) {
 
 	return false;
 }
+
+window.preload = preload;
+window.setup = setup;
+window.draw = draw;
+window.mousePressed = mousePressed;
+window.mouseDragged = mouseDragged;
+window.mouseReleased = mouseReleased;
+window.mouseWheel = mouseWheel;
+window.keyPressed = keyPressed;

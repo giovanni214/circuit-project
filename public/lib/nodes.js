@@ -1,9 +1,17 @@
+// Helper function at the top of nodes.js
+function createDefaultContext() {
+  return {
+    nodeStringCache: new Map()
+  };
+}
+
 export class Node {
 	evaluate(circuit, inputs) {
 		throw new Error("evaluate() not implemented for base Node.");
 	}
+  
 	// The signature is now clean, expecting the context to be passed in.
-	toString(context) {
+	toString(context = createDefaultContext) {
 		throw new Error("toString() not implemented for base Node.");
 	}
 }
@@ -13,10 +21,12 @@ export class LiteralNode extends Node {
 		super();
 		this.value = value;
 	}
+
 	evaluate(circuit, inputs) {
 		return this.value;
 	}
-	toString(context) {
+
+	toString(context = createDefaultContext()) {
 		return `${this.value}`;
 	}
 }
@@ -30,7 +40,8 @@ export class InputNode extends Node {
 	evaluate(circuit, inputs) {
 		return inputs[this.index] ?? 0;
 	}
-	toString(context) {
+
+	toString(context = createDefaultContext()) {
 		return `Input[${this.index}]`;
 	}
 }
@@ -39,7 +50,7 @@ export class ClockNode extends Node {
 	evaluate(circuit, inputs) {
 		return circuit.clock;
 	}
-	toString(context) {
+	toString(context = createDefaultContext()) {
 		return "CLK";
 	}
 }
@@ -77,7 +88,7 @@ export class GateNode extends Node {
 		}
 	}
 	// CORRECTED toString using the cache
-	toString(context) {
+	toString(context = createDefaultContext()) {
 		if (context.nodeStringCache.has(this)) return context.nodeStringCache.get(this);
 
 		const childStrs = this.inputNodes.map((child) => child.toString(context));
@@ -123,7 +134,7 @@ export class CompositeNode extends Node {
 	}
 
 	// CORRECTED toString using the cache
-	toString(context) {
+	toString(context = createDefaultContext()) {
 		if (context.nodeStringCache.has(this)) {
 			return context.nodeStringCache.get(this);
 		}
@@ -154,7 +165,7 @@ export class SubCircuitOutputNode extends Node {
 		return subCircuitOutputs[this.outputIndex];
 	}
 
-	toString(context) {
+	toString(context = createDefaultContext()) {
 		return `${this.compositeNode.toString(context)}[${this.outputIndex}]`;
 	}
 }
@@ -192,7 +203,7 @@ export class FeedbackNode extends Node {
 	}
 
 	// CORRECTED toString using the cache
-	toString(context) {
+	toString(context = createDefaultContext()) {
 		if (context.nodeStringCache.has(this)) return context.nodeStringCache.get(this);
 
 		// Mark ourselves as visited with our simple name.
