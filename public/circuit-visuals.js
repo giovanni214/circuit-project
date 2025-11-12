@@ -1,9 +1,7 @@
 // / @ts-check
 /// <reference path="../node_modules/@types/p5/global.d.ts" />
 
-import {Circuit} from "./lib/circuit.js";
-import { InputNode, GateNode } from "./lib/nodes.js";
-import {STANDARD_GATES} from "./lib/common-gates.js";
+import {createFullAdder} from "./examples/full-adder.js"
 
 // Global variables for grid & zoom
 let offsetX = 0;
@@ -331,21 +329,10 @@ function setup() {
 
 	rectMode(CENTER);
 	// Create and add the D-Flip-Flop to the canvas
-	const a = new InputNode(0);
-	const b = new InputNode(1);
+	const full_adder = createFullAdder();
 
-	const expr1 = new GateNode("OR", [a, b]);
-	const expr2 = new GateNode("NOT", [new GateNode("AND", [a, b])]);
-	const xor_output = new GateNode("AND", [expr1, expr2]);
-
-	const XOR_Gate = new Circuit("XOR", [xor_output]);
-
-	XOR_Gate.registerGate("OR", STANDARD_GATES["OR"]);
-	XOR_Gate.registerGate("NOT", STANDARD_GATES["NOT"]);
-	XOR_Gate.registerGate("AND", STANDARD_GATES["AND"]);
-
-	console.log(XOR_Gate.rootNodes[0].toString());
-	shapes.push(new CircuitShape(width / 2, height / 2, 200, XOR_Gate));
+	console.log(full_adder.toString());
+	shapes.push(new CircuitShape(width / 2, height / 2, 200, full_adder));
 }
 
 function draw() {
