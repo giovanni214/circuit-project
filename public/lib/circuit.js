@@ -58,6 +58,9 @@ export class Circuit {
 		return this.gateRegistry[name];
 	}
 	registerFeedbackNode(node) {
+		if (!this.feedbackNodes.includes(node)) {
+			this.feedbackNodes.push(node);
+		}
 		this.feedbackNodes.push(node);
 	} // ----------------------------------------------------- // 4.2) Compute inputLength & outputLength // -----------------------------------------------------
 
@@ -98,21 +101,71 @@ export class Circuit {
 		return this.rootNodes.length;
 	}
 
-	// ... inside the Circuit class in circuit.js ...
-
-	// ... inside the Circuit class in circuit.js ...
+	/**
+	 * EVALUATE FUNCTION - COMPREHENSIVE EXPLANATION
+	 *
+	 * This function simulates ONE TICK of the circuit.
+	 *
+	 * KEY CONCEPTS:
+	 *
+	 * 1. TICK vs DELTA CYCLE:
+	 *    - A TICK is one unit of simulated time (like a clock pulse in real hardware)
+	 *    - A DELTA CYCLE is an iteration within a single tick to resolve feedback loops
+	 *    - One tick may require MULTIPLE delta cycles to stabilize
+	 *
+	 * 2. THE SCHEDULER:
+	 *    - Holds delayed events (e.g., gate outputs that update after N ticks)
+	 *    - Events are scheduled with a target tick number
+	 *    - When we reach that tick, the event "fires" and updates values
+	 *
+	 * 3. FEEDBACK NODES:
+	 *    - Create circular dependencies (output feeds back to input)
+	 *    - Need special handling to avoid infinite loops during evaluation
+	 *    - Store their "current value" and update it each delta cycle
+	 *
+	 * 4. WHY DELTA CYCLES ARE NEEDED:
+	 *    - When feedback changes, it affects gates, which affect other gates, etc.
+	 *    - We need to keep re-evaluating until nothing changes (stabilization)
+	 *    - Each re-evaluation is one delta cycle
+	 */
+	// In circuit.js, modify the evaluate function:
 
 	evaluate(inputs = [], maxDeltaCycles = 50) {
+		if (inputs.length !== this.inputLength) {
+			console.warn(`Expected ${this.inputLength} inputs, got ${inputs.length}`);
+		}
 		this.currentTick = this.totalTicks;
 		const subHistory = [];
 
-		// --- 1. Perform a single, initial evaluation to get a baseline state. ---
-		// This is always necessary and will be our only step if the circuit is stable.
 		let iteration = 1;
 		const queueBefore = [...this.scheduler.events];
 		const events = this.scheduler.consumeEventsForTick(this.currentTick);
 		events.forEach((e) => e.callback());
-		this.feedbackNodes.forEach((fb) => fb.computeFeedback(this, inputs));
+
+		// FIX: Two-phase feedback update
+		// Phase 1: Capture all new feedback values (using OLD feedback values)
+		const feedbackUpdates = this.feedbackNodes.map((fb) => {
+			if (!fb.inputNode) return null;
+			const newValue = fb.inputNode.evaluate(this, inputs);
+			return { node: fb, value: newValue };
+		});
+
+		// Phase 2: Apply all updates simultaneously
+		feedbackUpdates.forEach((update) => {
+			if (update && update.node.delay === 0) {
+				update.node.currentValue = update.value;
+			} else if (update && update.node.delay > 0) {
+				const targetTick = this.currentTick + update.node.delay;
+				this.scheduler.scheduleEvent(
+					targetTick,
+					() => {
+						update.node.currentValue = update.value;
+					},
+					`Update ${update.node.name} to ${update.value}`
+				);
+			}
+		});
+
 		let oldOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
 
 		subHistory.push({
@@ -123,16 +176,39 @@ export class Circuit {
 			outputs: [...oldOutputs]
 		});
 
-		// --- 2. Only continue looping if the circuit is not yet stable. ---
-		// This loop will not run at all if the initial state is already stable.
 		while (this.scheduler.hasEventsForTick(this.currentTick) && iteration < maxDeltaCycles) {
 			iteration++;
 			const queueBeforeLoop = [...this.scheduler.events];
 			const eventsLoop = this.scheduler.consumeEventsForTick(this.currentTick);
 			eventsLoop.forEach((e) => e.callback());
-			this.feedbackNodes.forEach((fb) => fb.computeFeedback(this, inputs));
+
+			// FIX: Two-phase update in loop too
+			const feedbackUpdatesLoop = this.feedbackNodes.map((fb) => {
+				if (!fb.inputNode) return null;
+				const newValue = fb.inputNode.evaluate(this, inputs);
+				return { node: fb, value: newValue };
+			});
+
+			feedbackUpdatesLoop.forEach((update) => {
+				if (update && update.node.delay === 0) {
+					update.node.currentValue = update.value;
+				} else if (update && update.node.delay > 0) {
+					const targetTick = this.currentTick + update.node.delay;
+					this.scheduler.scheduleEvent(
+						targetTick,
+						() => {
+							update.node.currentValue = update.value;
+						},
+						`Update ${update.node.name} to ${update.value}`
+					);
+				}
+			});
 
 			const newOutputs = this.rootNodes.map((n) => n.evaluate(this, inputs));
+
+			if (arraysEqual(oldOutputs, newOutputs)) {
+				break;
+			}
 
 			subHistory.push({
 				deltaCycle: iteration,
@@ -141,22 +217,24 @@ export class Circuit {
 				queueAfter: [...this.scheduler.events],
 				outputs: [...newOutputs]
 			});
-
-			// If the outputs stop changing, we can exit.
-			if (arraysEqual(oldOutputs, newOutputs)) {
-				break;
-			}
 			oldOutputs = newOutputs;
 		}
 
-		this.history.push({ tick: this.totalTicks, subHistory });
+		const isStable = !this.scheduler.hasEventsForTick(this.currentTick);
+		if (!isStable && iteration >= maxDeltaCycles) {
+			console.warn(
+				`Circuit "${this.name}" did not stabilize after ${maxDeltaCycles} delta cycles at tick ${this.currentTick}`
+			);
+		}
+
+		this.history.push({
+			tick: this.totalTicks,
+			subHistory,
+			unstable: !isStable
+		});
 		this.totalTicks++;
 		return oldOutputs;
 	}
-
-	// ... rest of the Circuit class ...
-
-	// ... rest of the Circuit class ...
 
 	tick(inputs = []) {
 		return this.evaluate(inputs);
@@ -172,7 +250,7 @@ export class Circuit {
 		return old;
 	} // ----------------------------------------------------- // 4.4) Cloning // -----------------------------------------------------
 
-	#cloneNode(node, nodeMap) {
+	#cloneNode(node, nodeMap, preserveState = false) {
 		if (nodeMap.has(node)) return nodeMap.get(node);
 
 		let copy;
@@ -184,49 +262,73 @@ export class Circuit {
 			copy = new ClockNode();
 		} else if (node instanceof GateNode) {
 			copy = new GateNode(node.gateType, [], node.delay, node.name);
-
 			nodeMap.set(node, copy);
+			copy.inputNodes = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap, preserveState));
 
-			copy.inputNodes = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
-
-			copy.lastValue = node.lastValue;
+			// Preserve gate state if requested
+			if (preserveState) {
+				copy.lastValue = node.lastValue;
+			}
 
 			return copy;
 		} else if (node instanceof FeedbackNode) {
-			// THE FIX: Use node.initialValue instead of node.currentValue
-			copy = new FeedbackNode(null, node.initialValue, node.delay, node.name);
+			// KEY FIX: Choose value based on preserveState parameter
+			const feedbackValue = preserveState ? node.currentValue : node.initialValue;
 
+			copy = new FeedbackNode(null, feedbackValue, node.delay, node.name);
 			nodeMap.set(node, copy);
+			copy.inputNode = this.#cloneNode(node.inputNode, nodeMap, preserveState);
 
-			copy.inputNode = this.#cloneNode(node.inputNode, nodeMap);
+			// Preserve additional state
+			if (preserveState) {
+				copy.currentValue = node.currentValue;
+				// Note: initialValue stays the same for future resets
+			}
 
 			return copy;
 		} else if (node instanceof CompositeNode) {
-			const clonedInputs = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap));
+			const clonedInputs = node.inputNodes.map((c) => this.#cloneNode(c, nodeMap, preserveState));
 			copy = new CompositeNode(node.subCircuit, clonedInputs);
 		} else if (node instanceof SubCircuitOutputNode) {
-			const clonedCompositeNode = this.#cloneNode(node.compositeNode, nodeMap);
+			const clonedCompositeNode = this.#cloneNode(node.compositeNode, nodeMap, preserveState);
 			copy = new SubCircuitOutputNode(clonedCompositeNode, node.outputIndex);
 		} else {
 			throw new Error("Unsupported node type during clone.");
 		}
 
 		nodeMap.set(node, copy);
-
 		return copy;
 	}
 
-	clone() {
+	clone(preserveState = false) {
 		const nodeMap = new Map();
-		const roots = this.rootNodes.map((n) => this.#cloneNode(n, nodeMap));
+		const roots = this.rootNodes.map((n) => this.#cloneNode(n, nodeMap, preserveState));
 		const c = new Circuit(this.name, roots);
 		c.clock = this.clock;
 		c.prevClock = this.prevClock;
 		c.gateRegistry = { ...this.gateRegistry };
-		c.feedbackNodes = this.feedbackNodes.map((n) => this.#cloneNode(n, nodeMap));
-		c.scheduler = new Scheduler();
-		c.history = [];
-		c.totalTicks = this.totalTicks;
+		c.feedbackNodes = this.feedbackNodes.map((n) => this.#cloneNode(n, nodeMap, preserveState));
+
+		// When preserving state, also copy scheduler and history
+		if (preserveState) {
+			// Deep clone scheduler events
+			c.scheduler = new Scheduler();
+			this.scheduler.events.forEach((event) => {
+				c.scheduler.scheduleEvent(
+					event.tick,
+					event.callback // Note: callback references old nodes
+				);
+			});
+			c.totalTicks = this.totalTicks;
+			c.currentTick = this.currentTick;
+			// Optionally copy history
+			c.history = JSON.parse(JSON.stringify(this.history));
+		} else {
+			c.scheduler = new Scheduler();
+			c.history = [];
+			c.totalTicks = 0;
+		}
+
 		return c;
 	}
 
@@ -262,18 +364,17 @@ export class Circuit {
 
 		for (let i = 0; i < combinations; i++) {
 			const inputs = this.#numToBitArray(i, n);
-			// A fresh, stateless clone is created for each row to ensure isolation.
-			const testCircuit = this.clone();
+
+			// Explicitly request fresh state for truth table generation
+			const testCircuit = this.clone(false); // preserveState = false
+
 			let finalOutputs;
 
-			// If a clock level is specified, set it on the clone before evaluating.
 			if (clockLevel === 0 || clockLevel === 1) {
 				testCircuit.setClock(clockLevel);
 			}
 
-			// A single, stateless evaluation is performed.
 			finalOutputs = testCircuit.evaluate(inputs);
-
 			truthTable.push({ inputs, outputs: finalOutputs });
 		}
 

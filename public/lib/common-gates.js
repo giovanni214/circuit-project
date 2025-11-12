@@ -23,5 +23,9 @@ export const STANDARD_GATES = {
 			throw new Error("NOT gate requires exactly one input");
 		}
 		return input[0] ? 0 : 1;
-	}
+	},
+
+  XOR: (inputs) => {
+    return inputs.reduce((acc, bit) => acc ^ bit, 0);
+  }
 };
