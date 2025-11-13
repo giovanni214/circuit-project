@@ -1,7 +1,7 @@
 // / @ts-check
-/// <reference path="../node_modules/@types/p5/global.d.ts" />
+/// <reference path="../../node_modules/@types/p5/global.d.ts" />
 
-import {createFullAdder} from "./examples/full-adder.js"
+import { createFullAdder } from "../examples/full-adder.js";
 
 // Global variables for grid & zoom
 let offsetX = 0;
@@ -12,6 +12,92 @@ const gridSpacing = 50;
 // Global variables for panning the grid
 let draggingGrid = false;
 let gridPanOffset = { x: 0, y: 0 };
+
+//
+// Wire Class
+//
+class Wire {
+	/**
+	 * @param {Shape} startShape - The starting shape (output)
+	 * @param {Shape} endShape - The ending shape (input)
+	 */
+	constructor(startShape, endShape) {
+		this.startShape = startShape;
+		this.endShape = endShape;
+		this.draggingStart = false;
+		this.draggingEnd = false;
+		this.handleRadius = 8;
+	}
+
+	// Check if mouse is over start handle
+	isMouseOverStart() {
+		const handleX = this.startShape.screenX;
+		const handleY = this.startShape.screenY;
+		return dist(mouseX, mouseY, handleX, handleY) < this.handleRadius * zoomLevel;
+	}
+
+	// Check if mouse is over end handle
+	isMouseOverEnd() {
+		const handleX = this.endShape.screenX;
+		const handleY = this.endShape.screenY;
+		return dist(mouseX, mouseY, handleX, handleY) < this.handleRadius * zoomLevel;
+	}
+
+	// Start dragging either end
+	startDrag(isStartHandle) {
+		if (isStartHandle) {
+			this.draggingStart = true;
+		} else {
+			this.draggingEnd = true;
+		}
+	}
+
+	// Update wire position during drag
+	updatePosition() {
+		if (this.draggingStart) {
+			let worldMouse = createVector((mouseX - offsetX) / zoomLevel, (mouseY - offsetY) / zoomLevel);
+			// Snap to grid
+			worldMouse.x = round(worldMouse.x / gridSpacing) * gridSpacing;
+			worldMouse.y = round(worldMouse.y / gridSpacing) * gridSpacing;
+			this.startShape.worldX = worldMouse.x;
+			this.startShape.worldY = worldMouse.y;
+		}
+
+		if (this.draggingEnd) {
+			let worldMouse = createVector((mouseX - offsetX) / zoomLevel, (mouseY - offsetY) / zoomLevel);
+			// Snap to grid
+			worldMouse.x = round(worldMouse.x / gridSpacing) * gridSpacing;
+			worldMouse.y = round(worldMouse.y / gridSpacing) * gridSpacing;
+			this.endShape.worldX = worldMouse.x;
+			this.endShape.worldY = worldMouse.y;
+		}
+	}
+
+	// End dragging
+	endDrag() {
+		this.draggingStart = false;
+		this.draggingEnd = false;
+	}
+
+	// Draw the wire with handles
+	draw() {
+		// Update screen positions
+		this.startShape.updatePosition();
+		this.endShape.updatePosition();
+
+		// Draw wire line
+		stroke(0);
+		strokeWeight(2);
+		line(this.startShape.screenX, this.startShape.screenY, this.endShape.screenX, this.endShape.screenY);
+
+		// Draw handles
+		fill(this.draggingStart || this.isMouseOverStart() ? 255 : 100);
+		ellipse(this.startShape.screenX, this.startShape.screenY, this.handleRadius * 2 * zoomLevel);
+
+		fill(this.draggingEnd || this.isMouseOverEnd() ? 255 : 100);
+		ellipse(this.endShape.screenX, this.endShape.screenY, this.handleRadius * 2 * zoomLevel);
+	}
+}
 
 //
 // Abstract Shape Class
@@ -310,9 +396,10 @@ class CircuitShape extends Shape {
 }
 
 //
-// Global array to hold shapes
+// Global array to hold shapes and wires
 //
 let shapes = [];
+let wires = [];
 
 /**
  * @type {string | object}
@@ -333,6 +420,11 @@ function setup() {
 
 	console.log(full_adder.toString());
 	shapes.push(new CircuitShape(width / 2, height / 2, 200, full_adder));
+
+	// Create a test wire
+	const testOutput = new OutputShape(100, 100, 20, "1");
+	const testInput = new InputShape(300, 300, 20, 0);
+	wires.push(new Wire(testOutput, testInput));
 }
 
 function draw() {
@@ -359,6 +451,12 @@ function draw() {
 			}
 		}
 		shape.draw();
+	}
+
+	// Draw wires (on top of shapes)
+	for (let wire of wires) {
+		wire.updatePosition();
+		wire.draw();
 	}
 
 	// Optional: Display current offset and zoom for debugging.
@@ -397,46 +495,73 @@ function drawGrid() {
 
 let mouseIsReleased = true; // Legacy flag, can be useful
 let potentialDragTarget = null; // The shape that might be dragged
+let potentialWireTarget = null; // The wire that might be dragged
 let pressLocation = { x: 0, y: 0 }; // Where the mouse was initially pressed
 
-// Mouse interaction for dragging shapes or panning the grid.
+// Mouse interaction for dragging shapes, wires, or panning the grid.
 function mousePressed() {
 	mouseIsReleased = false;
 	potentialDragTarget = null;
+	potentialWireTarget = null;
 	pressLocation = { x: mouseX, y: mouseY };
 
 	let itemSelected = false;
-	for (let i = 0; i < shapes.length; i++) {
-		let parentShape = shapes[i];
-		let shapeToDrag = null;
 
-		// Check child input shapes first for CircuitShape
-		if (parentShape instanceof CircuitShape) {
-			for (const input of parentShape.inputShapes) {
-				if (input.isMouseOver()) {
-					shapeToDrag = input;
-					break;
-				}
-			}
-		}
-		// If no input was clicked, check the main body
-		if (!shapeToDrag && parentShape.isMouseOver()) {
-			shapeToDrag = parentShape;
-		}
-
-		if (shapeToDrag) {
+	// Check wires first (they should have priority for dragging handles)
+	for (let i = wires.length - 1; i >= 0; i--) {
+		let wire = wires[i];
+		if (wire.isMouseOverStart()) {
+			wire.startDrag(true);
+			potentialWireTarget = wire;
 			itemSelected = true;
-			potentialDragTarget = shapeToDrag;
-
-			// If a CircuitShape was clicked, bring it to the front for rendering priority.
-			const [movedShape] = shapes.splice(i, 1);
-			shapes.unshift(movedShape);
-
+			// Bring wire to front
+			wires.splice(i, 1);
+			wires.push(wire);
+			break;
+		} else if (wire.isMouseOverEnd()) {
+			wire.startDrag(false);
+			potentialWireTarget = wire;
+			itemSelected = true;
+			wires.splice(i, 1);
+			wires.push(wire);
 			break;
 		}
 	}
 
-	// If no shape is selected, start panning the grid.
+	// Then check shapes
+	if (!itemSelected) {
+		for (let i = 0; i < shapes.length; i++) {
+			let parentShape = shapes[i];
+			let shapeToDrag = null;
+
+			// Check child input shapes first for CircuitShape
+			if (parentShape instanceof CircuitShape) {
+				for (const input of parentShape.inputShapes) {
+					if (input.isMouseOver()) {
+						shapeToDrag = input;
+						break;
+					}
+				}
+			}
+			// If no input was clicked, check the main body
+			if (!shapeToDrag && parentShape.isMouseOver()) {
+				shapeToDrag = parentShape;
+			}
+
+			if (shapeToDrag) {
+				itemSelected = true;
+				potentialDragTarget = shapeToDrag;
+
+				// If a CircuitShape was clicked, bring it to the front for rendering priority.
+				const [movedShape] = shapes.splice(i, 1);
+				shapes.unshift(movedShape);
+
+				break;
+			}
+		}
+	}
+
+	// If no shape or wire is selected, start panning the grid.
 	if (!itemSelected) {
 		draggingGrid = true;
 		gridPanOffset.x = mouseX - offsetX;
@@ -449,6 +574,9 @@ function mouseDragged() {
 		// Pan the grid
 		offsetX = mouseX - gridPanOffset.x;
 		offsetY = mouseY - gridPanOffset.y;
+	} else if (potentialWireTarget) {
+		// Update wire drag
+		// No threshold needed for wires - they start dragging immediately
 	} else if (potentialDragTarget && !potentialDragTarget.dragging) {
 		// Check if the mouse has moved enough to be considered a drag
 		const distSq = (mouseX - pressLocation.x) ** 2 + (mouseY - pressLocation.y) ** 2;
@@ -479,8 +607,14 @@ function mouseReleased() {
 		}
 	}
 
+	// End wire drags
+	if (potentialWireTarget) {
+		potentialWireTarget.endDrag();
+	}
+
 	draggingGrid = false;
 	potentialDragTarget = null;
+	potentialWireTarget = null;
 }
 
 function keyPressed() {
