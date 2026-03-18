@@ -5,6 +5,7 @@ export class Wire {
         this.waypoints = waypoints;
         this.horizontalFirst = true;
         this.routeStyle = 0;
+        this.invertU = 0; // ← ADD THIS (was undefined, broke generateAutoWaypoints)
     }
 
     propagate() {

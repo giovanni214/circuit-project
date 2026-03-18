@@ -1,5 +1,5 @@
 import { CircuitManager } from './new-visuals/circuit-manager.js';
-import { createDFlipFlop } from "./examples/d-flip-flop.js"; // IMPORT THIS
+import { createDFlipFlop } from "./examples/d-flip-flop.js"; 
 
 let font;
 const manager = new CircuitManager();
@@ -12,10 +12,11 @@ window.setup = function() {
     createCanvas(windowWidth, windowHeight);
     textFont(font);
 
+    window.test = createDFlipFlop(); // ← TEST THE D-FLIP-FLOP CREATION FUNCTION
+
     // Spawn the D-Flip-Flop and test components
     manager.addComponent('CIRCUIT', 300, 200, createDFlipFlop());
     manager.addComponent('INPUT', 100, 180); // D
-    manager.addComponent('INPUT', 100, 220); // CLK
     manager.addComponent('OUTPUT', 500, 180); // Q
     manager.addComponent('OUTPUT', 500, 220); // Q-Not
 };

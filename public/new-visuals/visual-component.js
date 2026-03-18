@@ -166,34 +166,7 @@ export class VisualComponent {
                 text(clk === 1 ? 'CLK: ↑' : 'CLK: ↓', 0, this.height/2 - 12);
             }
 
-            if (this.gate.feedbackNodes && this.gate.feedbackNodes.length > 0) {
-                let fbCount = this.gate.feedbackNodes.length;
-                let spacing = this.width / (fbCount + 1);
-                
-                for (let i = 0; i < fbCount; i++) {
-                    let fbNode = this.gate.feedbackNodes[i];
-                    let fbX = -this.width/2 + spacing * (i + 1);
-                    let fbY = -this.height/2;
-
-                    stroke('#444');
-                    strokeWeight(2);
-                    noFill();
-                    beginShape();
-                    vertex(fbX - 8, fbY);
-                    bezierVertex(fbX - 8, fbY - 25, fbX + 8, fbY - 25, fbX + 8, fbY);
-                    endShape();
-
-                    let val = fbNode.currentValue || 0;
-                    fill(val === 1 ? '#4CAF50' : '#444444');
-                    noStroke();
-                    ellipse(fbX, fbY - 18, 8);
-
-                    fill(0);
-                    textSize(10);
-                    textAlign(CENTER, BOTTOM);
-                    text(fbNode.name || `MEM`, fbX, fbY - 24);
-                }
-            }
+           
         } else {
             textSize(14);
             text(this.type === 'INPUT' ? `IN: ${this.value}` : `OUT: ${this.value}`, 0, 0);
