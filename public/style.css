@@ -5,12 +5,15 @@
 	box-sizing: border-box;
 }
 
-/* Set a default font and background color */
-body {
+body, html {
 	font-family: Arial, sans-serif;
 	background-color: #f4f4f4;
 	color: #333;
 	line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Prevents scrollbars from appearing */
+    touch-action: none; /* Disables browser pinch-to-zoom and swipe-to-scroll */
 }
 
 /* Style for headings */
