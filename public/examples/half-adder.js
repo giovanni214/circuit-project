@@ -39,24 +39,24 @@ import { InputNode, GateNode } from "../lib/nodes.js";
 import { STANDARD_GATES } from "../lib/common-gates.js";
 
 export function createHalfAdder(delay = 0) {
-	// Input bits to add
-	const A = new InputNode(0);
-	const B = new InputNode(1);
+  // Input bits to add
+  const A = new InputNode(0, "A");
+  const B = new InputNode(1, "B");
 
-	// Sum output: 1 when exactly one input is 1
-	// XOR gives us this behavior naturally
-	const Sum = new GateNode("XOR", [A, B], delay, "HalfAdder_Sum");
+  // Sum output: 1 when exactly one input is 1
+  // XOR gives us this behavior naturally
+  const Sum = new GateNode("XOR", [A, B], delay, "HalfAdder_Sum");
 
-	// Carry output: 1 only when BOTH inputs are 1
-	// AND gate gives us this behavior
-	const Carry = new GateNode("AND", [A, B], delay, "HalfAdder_Carry");
+  // Carry output: 1 only when BOTH inputs are 1
+  // AND gate gives us this behavior
+  const Carry = new GateNode("AND", [A, B], delay, "HalfAdder_Carry");
 
-	// Create circuit with Sum as first output, Carry as second
-	const circuit = new Circuit("HalfAdder", [Sum, Carry]);
+  // Create circuit with Sum as first output, Carry as second
+  const circuit = new Circuit("HalfAdder", [Sum, Carry]);
 
-	// Register the gates we use
-	circuit.registerGate("XOR", STANDARD_GATES.XOR);
-	circuit.registerGate("AND", STANDARD_GATES.AND);
+  // Register the gates we use
+  circuit.registerGate("XOR", STANDARD_GATES.XOR);
+  circuit.registerGate("AND", STANDARD_GATES.AND);
 
-	return circuit;
+  return circuit;
 }

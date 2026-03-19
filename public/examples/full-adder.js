@@ -67,25 +67,25 @@ export function createFullAdder(delay = 0) {
     const halfAdder = createHalfAdder(delay);
 
     // Define our three inputs
-    const A = new InputNode(0);
-    const B = new InputNode(1);
-    const Cin = new InputNode(2);
+    const A = new InputNode(0, "A");
+    const B = new InputNode(1, "B");
+    const Cin = new InputNode(2, "Cin");
 
     // STAGE 1: First half adder adds A and B
     // This gives us A+B in two outputs: sum and carry
-    const halfAdder1 = new CompositeNode(halfAdder, [A, B]);
+    const halfAdder1 = new CompositeNode(halfAdder, [A, B], "A_B_HalfAdder");
     
     // Extract the outputs from first half adder:
-    const Sum1 = new SubCircuitOutputNode(halfAdder1, 0);   // A XOR B
-    const Carry1 = new SubCircuitOutputNode(halfAdder1, 1); // A AND B
+    const Sum1 = new SubCircuitOutputNode(halfAdder1, 0, "Sum1");   // A XOR B
+    const Carry1 = new SubCircuitOutputNode(halfAdder1, 1, "Carry1"); // A AND B
 
     // STAGE 2: Second half adder adds the result (Sum1) with Cin
     // This completes the three-input addition
-    const halfAdder2 = new CompositeNode(halfAdder, [Sum1, Cin]);
+    const halfAdder2 = new CompositeNode(halfAdder, [Sum1, Cin], "Sum1_Cin_HalfAdder");
     
     // Extract outputs from second half adder:
-    const Sum = new SubCircuitOutputNode(halfAdder2, 0);   // Final sum: (A XOR B) XOR Cin
-    const Carry2 = new SubCircuitOutputNode(halfAdder2, 1); // Second carry: (A XOR B) AND Cin
+    const Sum = new SubCircuitOutputNode(halfAdder2, 0, "Sum");   // Final sum: (A XOR B) XOR Cin
+    const Carry2 = new SubCircuitOutputNode(halfAdder2, 1, "Carry2"); // Second carry: (A XOR B) AND Cin
 
     // STAGE 3: Combine the two possible carry outputs
     // We get a carry out if EITHER:

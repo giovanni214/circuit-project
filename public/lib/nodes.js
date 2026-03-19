@@ -1,13 +1,19 @@
-// Helper function at the top of nodes.js
+// Helper function for caching string generation
 export function createDefaultContext() {
 	return {
 		nodeStringCache: new Map()
 	};
 }
 
+// NEW: Helper function to generate unique, readable random names
+export function generateId(prefix) {
+	// e.g., OR_GATE_X7R9T
+	return `${prefix}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+}
+
 export class Node {
 	constructor(name) {
-		this.name = name || null;
+		this.name = name || generateId("NODE");
 	}
 
 	evaluate(circuit, inputs) {
@@ -21,7 +27,7 @@ export class Node {
 
 export class LiteralNode extends Node {
 	constructor(value, name) {
-		super(name || String(value));
+		super(name || generateId(`LITERAL_${value}`));
 		this.value = value;
 	}
 
@@ -36,7 +42,7 @@ export class LiteralNode extends Node {
 
 export class InputNode extends Node {
 	constructor(index, name) {
-		super(name || `IN_${index}`);
+		super(name || generateId(`INPUT_${index}`));
 		this.index = index;
 	}
 
@@ -51,7 +57,7 @@ export class InputNode extends Node {
 
 export class ClockNode extends Node {
 	constructor(name) {
-		super(name || "CLK");
+		super(name || generateId("CLK"));
 	}
 
 	evaluate(circuit, inputs) {
@@ -65,7 +71,7 @@ export class ClockNode extends Node {
 
 export class GateNode extends Node {
 	constructor(gateType, inputNodes, delay = 0, name) {
-		super(name || `${gateType}_${Math.random().toString(36).substr(2, 5)}`);
+		super(name || generateId(`${gateType}_GATE`));
 		this.gateType = gateType;
 		this.inputNodes = inputNodes;
 		this.delay = delay;
@@ -112,7 +118,10 @@ export class GateNode extends Node {
 
 export class CompositeNode extends Node {
 	constructor(subCircuit, inputNodes, name) {
-		super(name || subCircuit.name || "COMP");
+		// Clean up subCircuit name spaces so "Half Adder" becomes "HALF_ADDER_A1B2C"
+		const cleanPrefix = subCircuit.name ? subCircuit.name.toUpperCase().replace(/\s+/g, '_') : "COMP";
+		super(name || generateId(cleanPrefix));
+
 		if (!subCircuit || typeof subCircuit.clone !== "function") {
 			throw new Error("CompositeNode requires a valid Circuit instance.");
 		}
@@ -154,7 +163,7 @@ export class SubCircuitOutputNode extends Node {
 		// Extract the human-readable root node name from the sub-circuit
 		const rootNodeName = compositeNode.subCircuit.rootNodes?.[outputIndex]?.name;
 
-		super(name || rootNodeName || `${compositeNode.name}[${outputIndex}]`);
+		super(name || rootNodeName || generateId(`${compositeNode.name}_OUT_${outputIndex}`));
 
 		if (!(compositeNode instanceof CompositeNode)) {
 			throw new Error("SubCircuitOutputNode requires a CompositeNode as its input.");
@@ -179,8 +188,9 @@ export class SubCircuitOutputNode extends Node {
 }
 
 export class FeedbackNode extends Node {
-	constructor(inputNode, initialValue = 0, delay = 0, name = "Q") {
-		super(name);
+	// We changed default name to null so generateId kicks in!
+	constructor(inputNode, initialValue = 0, delay = 0, name = null) {
+		super(name || generateId("FEEDBACK"));
 		this.inputNode = inputNode;
 		this.initialValue = initialValue;
 		this.currentValue = initialValue;
