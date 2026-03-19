@@ -1,4 +1,3 @@
-// 6. public/visuals/Viewport.js
 export class Viewport {
     constructor() {
         this.x = 0;
@@ -6,6 +5,10 @@ export class Viewport {
         this.zoom = 1;
         this.panStartX = 0;
         this.panStartY = 0;
+
+        // Touch interaction properties
+        this.initialPinchDist = null;
+        this.zoomStart = 1;
     }
 
     apply() {
@@ -36,6 +39,34 @@ export class Viewport {
         this.zoom = constrain(this.zoom * zoomAmount, 0.2, 3);
         this.x = mx - (mx - this.x) * (this.zoom / prevZoom);
         this.y = my - (my - this.y) * (this.zoom / prevZoom);
+    }
+
+    handleTouchZoom(touches) {
+        if (touches.length === 2) {
+            let dx = touches[0].x - touches[1].x;
+            let dy = touches[0].y - touches[1].y;
+            let currentDist = Math.sqrt(dx * dx + dy * dy);
+
+            let centerX = (touches[0].x + touches[1].x) / 2;
+            let centerY = (touches[0].y + touches[1].y) / 2;
+
+            if (this.initialPinchDist === null) {
+                this.initialPinchDist = currentDist;
+                this.zoomStart = this.zoom;
+            } else {
+                let prevZoom = this.zoom;
+                this.zoom = constrain(this.zoomStart * (currentDist / this.initialPinchDist), 0.2, 3);
+
+                this.x = centerX - (centerX - this.x) * (this.zoom / prevZoom);
+                this.y = centerY - (centerY - this.y) * (this.zoom / prevZoom);
+            }
+        } else {
+            this.initialPinchDist = null;
+        }
+    }
+
+    endTouch() {
+        this.initialPinchDist = null;
     }
 
     drawGrid(spacing) {

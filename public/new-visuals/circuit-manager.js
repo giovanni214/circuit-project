@@ -16,6 +16,12 @@ export class CircuitManager {
         this.waypoints = [];
         this.activeWaypointIndex = -1;
 
+        // Internal press tracking
+        this.pressStartTime = 0;
+        this.pressStartX = 0;
+        this.pressStartY = 0;
+        this.longPressFired = false;
+
         this.gridSize = 20;
         this.inspectedComponent = null;
 
@@ -41,12 +47,9 @@ export class CircuitManager {
 
     // ── Scene Drill-In / Drill-Out ──────────────────────────────
 
-    // NEW: A robust drill function that accepts raw circuit data
-    // NEW: A robust drill function that accepts raw circuit data
     drillIntoCircuit(circuitRef, name) {
         if (!circuitRef?.rootNodes) return;
 
-        // Push the current scene state (works for both ROOT and nested inspectors)
         this.sceneStack.push({
             crumbName: this.isInspecting() ? this.inspectorCircuitName : 'ROOT',
             state: this.state,
@@ -59,24 +62,16 @@ export class CircuitManager {
             zoom: this.viewport.zoom
         });
 
-        // --- NEW: Calculate the full hierarchy path for node labels ---
-        // --- NEW: Calculate the full hierarchy path for node labels ---
         let pathNames = [];
         for (let s of this.sceneStack) {
-            // We ignore 'ROOT' so it doesn't say "ROOT > Full Adder"
             if (s.crumbName !== 'ROOT') {
                 pathNames.push(s.crumbName);
             }
         }
-        // Only append the current name if it exists to avoid trailing arrows
         if (name) pathNames.push(name);
 
-        // Use a breadcrumb separator instead of a newline!
         const pathPrefix = pathNames.join(' > ');
-        // -------------------------------------------------------------
-        // -------------------------------------------------------------
 
-        // Generate the new inspector view and pass the pathPrefix
         this.inspectorScene = new InspectorScene(circuitRef, this.gridSize, pathPrefix);
         this.inspectorCircuitName = name || 'SubCircuit';
 
@@ -92,14 +87,12 @@ export class CircuitManager {
 
     drillInto(comp) {
         if (!comp?.gate?.rootNodes) return;
-        // Strictly use the instance name!
         this.drillIntoCircuit(comp.gate, comp.gate.name);
     }
 
     drillOut() {
         if (this.sceneStack.length === 0) return;
 
-        // Pop the stack and perfectly restore the previous state
         const prev = this.sceneStack.pop();
         this.state = prev.state;
         this.components = prev.components;
@@ -203,7 +196,6 @@ export class CircuitManager {
         alert(`Circuit "${trimmed}" saved! You can now load it from the registry.`);
     }
 
-    //seperate prompt from load
     promptLoad() {
         const names = CircuitRegistry.list();
 
@@ -243,13 +235,13 @@ export class CircuitManager {
 
         console.log(`[Registry] Loaded "${name}"`);
     }
+
     // ── Wire Drawing ────────────────────────────────────────────
 
     finishWire(endNode) {
         let outNode = this.startNode.type === 'OUTPUT' ? this.startNode : endNode;
         let inNode = this.startNode.type === 'INPUT' ? this.startNode : endNode;
 
-        // Guard: prevent duplicate wires (same out→in pair)
         const duplicate = this.wires.some(
             w => w.startNode === outNode && w.endNode === inNode
         );
@@ -260,7 +252,6 @@ export class CircuitManager {
             return;
         }
 
-        // Guard: prevent multiple drivers on one input node
         const alreadyDriven = this.wires.some(w => w.endNode === inNode);
         if (alreadyDriven) {
             console.warn('[Wire] Input node already has a driver — connection refused.');
@@ -373,6 +364,23 @@ export class CircuitManager {
             }
         }
 
+        if (this.pressStartTime > 0 && !this.longPressFired && !this.isInspecting()) {
+            let holdTime = millis() - this.pressStartTime;
+            if (holdTime > 500) {
+                // Delete the item!
+                this.handleLongPress(this.pressStartX, this.pressStartY);
+                this.longPressFired = true;
+            } else if (holdTime > 150) {
+                // Draw a shrinking red loading circle around the finger/mouse
+                const worldPt = this.viewport.getWorldCoords(this.pressStartX, this.pressStartY);
+                noFill();
+                stroke(255, 60, 60, map(holdTime, 150, 500, 0, 255));
+                strokeWeight(4 / this.viewport.zoom);
+                let r = map(holdTime, 150, 500, 40, 5) / this.viewport.zoom;
+                ellipse(worldPt.x, worldPt.y, r, r);
+            }
+        }
+
         pop();
 
         if (this.inspectedComponent) {
@@ -420,7 +428,6 @@ export class CircuitManager {
         textSize(13);
         textAlign(LEFT, CENTER);
 
-        // UPDATE: Use crumbName so it renders deeply nested paths properly
         const crumbs = this.sceneStack.map(s => s.crumbName).join(' > ');
         const full = crumbs
             ? `${crumbs} > ${this.inspectorCircuitName}`
@@ -452,14 +459,75 @@ export class CircuitManager {
 
     // ── Input Handling ──────────────────────────────────────────
 
+    handleLongPress(mx, my) {
+        if (this.isInspecting()) return;
+
+        // Instantly kill any accidental wire draws that started when the screen was first touched
+        this.cancelWireDraw();
+
+        const worldPt = this.viewport.getWorldCoords(mx, my);
+
+        // Check if a wire was long-pressed
+        for (let wire of this.wires) {
+            if (wire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
+                wire.endNode.value = 0;
+                if (wire.endNode.parent) wire.endNode.parent.updateLogic();
+
+                this.wires = this.wires.filter(w => w !== wire);
+
+                if (typeof navigator.vibrate === "function") {
+                    navigator.vibrate(50);
+                }
+
+                this.state = 'IDLE';
+                this.activeElement = null;
+                this.branchParentWire = null;
+                return;
+            }
+        }
+
+        // Check if a component was long-pressed
+        for (let comp of this.components) {
+            if (comp.isHit(worldPt.x, worldPt.y)) {
+                this.wires
+                    .filter(w => w.startNode.parent === comp)
+                    .forEach(w => {
+                        w.endNode.value = 0;
+                        if (w.endNode.parent) w.endNode.parent.updateLogic();
+                    });
+
+                this.components = this.components.filter(c => c !== comp);
+                this.wires = this.wires.filter(
+                    w => w.startNode.parent !== comp && w.endNode.parent !== comp
+                );
+
+                if (typeof navigator.vibrate === "function") {
+                    navigator.vibrate(50);
+                }
+
+                this.state = 'IDLE';
+                this.activeElement = null;
+                return;
+            }
+        }
+    }
+
     handleMouseDrag(mx, my) {
         if (this.isInspecting()) {
             this.viewport.updatePan(mx, my);
             return;
         }
 
+        if (dist(mx, my, this.pressStartX, this.pressStartY) > 20) {
+            const holdTime = millis() - this.pressStartTime;
+            if (holdTime < 150) {
+                this.longPressFired = true;
+            }
+        }
+
         if (this.state === 'PREPARE_BRANCH' && this.activeElement instanceof Wire) {
-            if (dist(mx, my, this.branchScreenX, this.branchScreenY) > 5) {
+            const holdTime = millis() - this.pressStartTime;
+            if (holdTime < 150 && dist(mx, my, this.branchScreenX, this.branchScreenY) > 15) {
                 const wire = this.activeElement;
                 const insertIndex = wire.insertWaypointAt(this.branchStartX, this.branchStartY, this.gridSize);
 
@@ -501,17 +569,20 @@ export class CircuitManager {
             return;
         }
 
+        this.pressStartTime = millis();
+        this.pressStartX = mx;
+        this.pressStartY = my;
+        this.longPressFired = false;
+
         const worldPt = this.viewport.getWorldCoords(mx, my);
         const hitRadius = 10 / this.viewport.zoom;
 
-        // If we are actively drawing a wire and we left click...
         if (this.state === 'DRAWING_WIRE') {
             const node = this.getHoveredNode(worldPt.x, worldPt.y, hitRadius);
 
             if (node && node !== this.startNode && node.type !== this.startNode.type) {
                 this.finishWire(node);
             } else if (!node) {
-                // If we clicked a wire while dragging backward from an INPUT, splice it!
                 if (this.startNode.type === 'INPUT') {
                     for (let targetWire of this.wires) {
                         if (targetWire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
@@ -538,7 +609,6 @@ export class CircuitManager {
                     }
                 }
 
-                // If no wire was hit, just drop a waypoint (Click-to-Route)
                 this.waypoints.push({
                     x: this.snap(worldPt.x),
                     y: this.snap(worldPt.y)
@@ -547,7 +617,6 @@ export class CircuitManager {
             return;
         }
 
-        // Start a brand new wire
         const node = this.getHoveredNode(worldPt.x, worldPt.y, hitRadius);
         if (node) {
             this.state = 'DRAWING_WIRE';
@@ -559,7 +628,6 @@ export class CircuitManager {
             return;
         }
 
-        // Component Dragging & Clocks
         for (let i = this.components.length - 1; i >= 0; i--) {
             const comp = this.components[i];
 
@@ -583,7 +651,6 @@ export class CircuitManager {
             }
         }
 
-        // Wire Branches & Waypoints
         for (let wire of this.wires) {
             const wpIdx = wire.getHitWaypointIndex(worldPt.x, worldPt.y, this.viewport.zoom);
             if (wpIdx !== -1) {
@@ -619,13 +686,13 @@ export class CircuitManager {
     handleMouseRelease() {
         if (this.isInspecting()) return;
 
+        this.pressStartTime = 0;
+
         let worldPt = this.viewport.getWorldCoords(mouseX, mouseY);
 
-        // Support Drag-and-Drop UX (letting go of the mouse button over a target)
         if (this.state === 'DRAWING_WIRE' && this.startNode) {
             let d = dist(this.startNode.worldX, this.startNode.worldY, worldPt.x, worldPt.y);
 
-            // Only trigger drag-and-drop finish if they dragged at least 10px from the start pin
             if (d > 10) {
                 let endNode = this.getHoveredNode(worldPt.x, worldPt.y);
 
@@ -634,7 +701,6 @@ export class CircuitManager {
                     return;
                 }
 
-                // If they dragged an INPUT wire backward onto an existing wire and let go
                 if (this.startNode.type === 'INPUT') {
                     for (let targetWire of this.wires) {
                         if (targetWire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
@@ -661,8 +727,6 @@ export class CircuitManager {
                     }
                 }
             }
-
-            // If they just clicked or let go in empty space, do nothing so click-to-route continues!
             return;
         }
 
@@ -696,25 +760,21 @@ export class CircuitManager {
 
         const worldPt = this.viewport.getWorldCoords(mx, my);
 
-        // ── NEW: Nested Inspecting ─────────────────────────────────────────
         if (this.isInspecting()) {
             if (this.inspectorScene) {
                 for (let gn of this.inspectorScene.nodes) {
                     if (gn.isHit(worldPt.x, worldPt.y)) {
                         const ln = gn.logicNode;
-                        // If this block is a CompositeNode holding a SubCircuit, drill down!
                         if (ln && ln.subCircuit && ln.subCircuit.rootNodes) {
-                            // Strictly use the instance name!
                             this.drillIntoCircuit(ln.subCircuit, ln.name);
                         }
                         return;
                     }
                 }
             }
-            return; // Don't do wire logic while inspecting
+            return;
         }
 
-        // Remove double-clicked waypoints
         let hitWaypoints = [];
         for (let wire of this.wires) {
             const wpIdx = wire.getHitWaypointIndex(worldPt.x, worldPt.y, this.viewport.zoom);
@@ -739,7 +799,6 @@ export class CircuitManager {
             return;
         }
 
-        // Flip double-clicked segment routing
         let hitSegments = [];
         for (let wire of this.wires) {
             const segIdx = wire.getHitSegmentIndex(worldPt.x, worldPt.y, this.viewport.zoom);
@@ -763,7 +822,6 @@ export class CircuitManager {
         for (let comp of this.components) {
             if (comp.isHit(worldPt.x, worldPt.y)) {
                 if (comp.type === 'CIRCUIT' && comp.gate?.rootNodes) {
-                    // Strictly use the instance name!
                     this.drillIntoCircuit(comp.gate, comp.gate.name);
                 } else {
                     comp.toggleState();
@@ -772,26 +830,7 @@ export class CircuitManager {
             }
         }
     }
-    // Add these to the CircuitManager class
-    handleTouchStart(touches) {
-        if (touches.length > 0) {
-            this.handleMousePress(touches[0].x, touches[0].y);
-        }
-        return false; // Prevent default browser behavior
-    }
 
-    handleTouchMove(touches) {
-        if (touches.length > 0) {
-            this.handleMouseDrag(touches[0].x, touches[0].y);
-        }
-        return false;
-    }
-
-    handleTouchEnd() {
-        this.handleMouseRelease();
-        return false;
-    }
-    
     handleKeyDown(key, keyCode) {
         if (this.isInspecting()) {
             if (key === 'Escape') this.drillOut();
@@ -831,14 +870,12 @@ export class CircuitManager {
         } else if (key === 'Backspace' || key === 'Delete') {
             if (this.activeElement) {
                 if (this.activeElement instanceof Wire) {
-                    // Reset the input node's value before removing the wire
                     this.activeElement.endNode.value = 0;
                     if (this.activeElement.endNode.parent) {
                         this.activeElement.endNode.parent.updateLogic();
                     }
                     this.wires = this.wires.filter(w => w !== this.activeElement);
                 } else {
-                    // Reset downstream nodes driven by this component's outputs
                     this.wires
                         .filter(w => w.startNode.parent === this.activeElement)
                         .forEach(w => {
@@ -861,7 +898,6 @@ export class CircuitManager {
     // ── Simulation ──────────────────────────────────────────────
 
     cascadeLogic() {
-        // Enough passes for the longest logic chain + deep feedback chains
         const passes = Math.max(this.components.length * 2, 16);
         for (let i = 0; i < passes; i++) {
             for (let wire of this.wires) wire.propagate();

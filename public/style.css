@@ -52,6 +52,10 @@ h1 {
   touch-action: none; /* Prevents the page from scrolling while drawing wires */
   -webkit-user-select: none;
   user-select: none;
+
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
 }
 
 /* Style for paragraphs */

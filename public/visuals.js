@@ -1,18 +1,28 @@
 import { CircuitManager } from './new-visuals/circuit-manager.js';
-import { createFullAdder } from "./examples/full-adder.js";
+import {createFullAdder} from "./examples/full-adder.js"
 
 let font;
 const manager = new CircuitManager();
+let lastTapTime = 0;
 
-window.preload = function () {
-    font = loadFont("/fonts/ttf/JetBrainsMono-SemiBold.ttf");
-};
-
-window.setup = function () {
+// p5.js 2.0 BREAKING CHANGE: preload() is deprecated. 
+// We now use an async setup() function.
+window.setup = async function () {
     const container = document.getElementById('canvas-container');
 
-    // Initial creation
-    createCanvas(container.offsetWidth, container.offsetHeight).parent(container);
+    let cvs = createCanvas(container.offsetWidth, container.offsetHeight);
+    cvs.parent(container);
+
+    // The Safari Nuke
+    cvs.style('touch-action', 'none');
+    cvs.style('-webkit-touch-callout', 'none');
+    cvs.style('-webkit-user-select', 'none');
+    cvs.style('user-select', 'none');
+    cvs.style('outline', 'none');
+    cvs.style('-webkit-tap-highlight-color', 'transparent');
+
+    // p5.js 2.0 requires loading functions to be awaited!
+    font = await loadFont("/fonts/ttf/JetBrainsMono-SemiBold.ttf");
     textFont(font);
 
     manager.viewport.x = width / 2;
@@ -21,11 +31,15 @@ window.setup = function () {
     manager.load("FullAdder");
     manager.stepSimulation();
 
-    // NEW: Automatically sync canvas size whenever the container's layout settles or shifts
     const observer = new ResizeObserver(() => {
         window.windowResized();
     });
     observer.observe(container);
+
+    document.addEventListener('contextmenu', event => event.preventDefault());
+
+    // The Safari Insurance Policy (Passive: False)
+    document.addEventListener('touchstart', function () { }, { passive: false });
 };
 
 window.draw = function () {
@@ -33,26 +47,52 @@ window.draw = function () {
     manager.draw(font);
 };
 
+// --- Unified Pointer Events (p5.js 2.0 Native) ---
+// Because p5 2.0 uses the modern Pointer API, these mouse functions naturally 
+// and perfectly handle touches without Safari swallowing them!
+
 window.mousePressed = function () {
+    if (touches.length > 0) {
+        let currentTime = millis();
+        // Double-tap logic
+        if (currentTime - lastTapTime > 0 && currentTime - lastTapTime < 300) {
+            manager.handleDoubleClick(mouseX, mouseY);
+            lastTapTime = 0;
+            return false;
+        }
+        lastTapTime = currentTime;
+    }
+
     manager.handleMousePress(mouseX, mouseY);
+    return false;
 };
 
 window.mouseDragged = function () {
+    // We still intercept for the 2-finger zoom
+    if (touches.length === 2) {
+        manager.viewport.handleTouchZoom(touches);
+        return false;
+    }
+
     manager.handleMouseDrag(mouseX, mouseY);
+    return false;
 };
 
 window.mouseReleased = function () {
     manager.handleMouseRelease();
+    manager.viewport.endTouch();
+    return false;
 };
 
 window.doubleClicked = function () {
     manager.handleDoubleClick(mouseX, mouseY);
+    return false;
 };
+
+// --- Standard Keyboard & Scroll Events ---
 
 window.keyPressed = function () {
     manager.handleKeyDown(key, keyCode);
-
-    // Prevent default browser behaviors for space and backspace
     if (key === ' ' || key === 'Backspace') {
         return false;
     }
@@ -60,28 +100,10 @@ window.keyPressed = function () {
 
 window.mouseWheel = function (event) {
     manager.viewport.handleZoom(event, mouseX, mouseY);
-    return false; // This disables the default browser scrolling!
+    return false;
 };
 
 window.windowResized = function () {
     const container = document.getElementById('canvas-container');
     resizeCanvas(container.offsetWidth, container.offsetHeight);
 };
-
-// In your global scope where CircuitManager is instantiated (e.g., let manager = new CircuitManager())
-
-function touchStarted() {
-    // Map p5 touch structure to simple x,y for the manager
-    const t = touches.map(p => ({ x: p.x, y: p.y }));
-    manager.handleTouchStart(t);
-}
-
-function touchMoved() {
-    const t = touches.map(p => ({ x: p.x, y: p.y }));
-    manager.handleTouchMove(t);
-    return false; // Critical: stops the "pull-to-refresh" on Chrome/Safari
-}
-
-function touchEnded() {
-    manager.handleTouchEnd();
-}
