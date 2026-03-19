@@ -91,7 +91,7 @@ export function createFullAdder(delay = 0) {
     // We get a carry out if EITHER:
     // - Both A and B were 1 (Carry1), OR
     // - Exactly one of A,B was 1 AND Cin was 1 (Carry2)
-    const Cout = new GateNode("OR", [Carry1, Carry2], delay, "FullAdder_Cout");
+    const Cout = new GateNode("OR", [Carry1, Carry2], delay, "Cout");
 
     // Create the circuit with Sum and Cout as outputs
     const circuit = new Circuit("FullAdder", [Sum, Cout]);

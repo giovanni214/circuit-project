@@ -24,38 +24,46 @@ export class VisualComponent {
       const maxPins = Math.max(this.gate.inputLength, this.gate.outputLength);
       let pinSpacing = this.gridSize * 2;
 
-      this.height = Math.max(this.gridSize * 4, (maxPins + 1) * pinSpacing);
+      // 1. Ensure enough vertical space for Title, Pins, and Clock
+      let headerPadding = 30;
+      let footerPadding = (typeof this.gate.clock !== "undefined") ? 30 : 15;
 
-      // --- NEW: Dynamic Width Calculation ---
-      let maxLabelLen = this.gate.name ? this.gate.name.length : 0;
+      this.height = Math.max(
+        this.gridSize * 5,
+        (maxPins - 1) * pinSpacing + headerPadding + footerPadding
+      );
+
+      // 2. Better Dynamic Width Calculation
+      let titleLen = this.gate.name ? this.gate.name.length : 0;
+      let maxOutLen = 0;
       if (this.gate.rootNodes) {
         for (let i = 0; i < this.gate.outputLength; i++) {
           let rn = this.gate.rootNodes[i];
           let lbl = rn && rn.name ? rn.name : `OUT${i}`;
-          // Estimate length of 'INx' + 'lbl' taking up space on the same row
-          let rowLen = lbl.length + 6;
-          if (rowLen > maxLabelLen) maxLabelLen = rowLen;
+          if (lbl.length > maxOutLen) maxOutLen = lbl.length;
         }
       }
 
-      // Assume ~8 pixels per character width + 40px of padding for the margins
-      let estimatedTextWidth = maxLabelLen * 8 + 40;
-      let minWidth = this.gridSize * 5; // Enforce at least 100px wide
+      // Width needs to clear either the top title OR the side-by-side labels
+      let requiredCharsWidth = Math.max(titleLen, 4 + maxOutLen + 4);
+      let estimatedTextWidth = requiredCharsWidth * 8 + 40;
+      let minWidth = this.gridSize * 6;
 
-      // Snap the calculated width to the nearest grid step!
       this.width = Math.max(
         minWidth,
         Math.ceil(estimatedTextWidth / this.gridSize) * this.gridSize,
       );
-      // --------------------------------------
 
-      let inStartY = -((this.gate.inputLength - 1) * pinSpacing) / 2;
+      // 3. Shift pins down slightly so they live in the "pin area" below the title
+      let pinCenterOffsetY = (headerPadding - footerPadding) / 2;
+
+      let inStartY = -((this.gate.inputLength - 1) * pinSpacing) / 2 + pinCenterOffsetY;
       for (let i = 0; i < this.gate.inputLength; i++) {
         let offsetY = inStartY + i * pinSpacing;
         this.inputNodes.push(new Node(this, -this.width / 2, offsetY, "INPUT"));
       }
 
-      let outStartY = -((this.gate.outputLength - 1) * pinSpacing) / 2;
+      let outStartY = -((this.gate.outputLength - 1) * pinSpacing) / 2 + pinCenterOffsetY;
       for (let i = 0; i < this.gate.outputLength; i++) {
         let offsetY = outStartY + i * pinSpacing;
         this.outputNodes.push(
@@ -72,7 +80,6 @@ export class VisualComponent {
       this.inputNodes.push(new Node(this, -this.width / 2, 0, "INPUT"));
     }
   }
-
   updateNodes() {
     for (let node of [...this.inputNodes, ...this.outputNodes]) {
       node.updateWorldPosition();
@@ -160,25 +167,52 @@ export class VisualComponent {
     textAlign(CENTER, CENTER);
 
     if (this.type === "CIRCUIT" && this.gate) {
-      textSize(12);
+      // Dynamic scaling for Title
+      let defaultTitleSize = 12;
+      textSize(defaultTitleSize);
+      let titleTw = textWidth(`${this.gate.name}`);
+      let maxTitleWidth = this.width - 10;
+      if (titleTw > maxTitleWidth) {
+        textSize(Math.max(6, defaultTitleSize * (maxTitleWidth / titleTw)));
+      }
       text(`${this.gate.name}`, 0, -this.height / 2 + 15);
 
+      // Output Labels
       textAlign(RIGHT, CENTER);
       for (let i = 0; i < this.outputNodes.length; i++) {
         let n = this.outputNodes[i];
         let rootNode = this.gate.rootNodes[i];
         let lbl = rootNode && rootNode.name ? rootNode.name : `OUT${i}`;
         fill(0);
+
+        let defaultLblSize = 12;
+        textSize(defaultLblSize);
+        let lblTw = textWidth(lbl);
+        let maxLblWidth = (this.width / 2) - 12;
+        if (lblTw > maxLblWidth) {
+          textSize(Math.max(5, defaultLblSize * (maxLblWidth / lblTw)));
+        }
         text(lbl, this.width / 2 - 8, n.offsetY);
       }
 
+      // Input Labels
       textAlign(LEFT, CENTER);
       for (let i = 0; i < this.inputNodes.length; i++) {
         let n = this.inputNodes[i];
+        let lbl = `IN${i}`;
         fill(0);
-        text(`IN${i}`, -this.width / 2 + 8, n.offsetY);
+
+        let defaultLblSize = 12;
+        textSize(defaultLblSize);
+        let lblTw = textWidth(lbl);
+        let maxLblWidth = (this.width / 2) - 12;
+        if (lblTw > maxLblWidth) {
+          textSize(Math.max(5, defaultLblSize * (maxLblWidth / lblTw)));
+        }
+        text(lbl, -this.width / 2 + 8, n.offsetY);
       }
 
+      // Clock
       if (typeof this.gate.clock !== "undefined") {
         let clk = this.gate.clock;
 
@@ -191,15 +225,26 @@ export class VisualComponent {
         fill(clk === 1 ? "#4CAF50" : "#F44336");
         noStroke();
         textAlign(CENTER, CENTER);
-        text(clk === 1 ? "CLK: ↑" : "CLK: ↓", 0, this.height / 2 - 12);
+
+        let clkText = clk === 1 ? "CLK: ↑" : "CLK: ↓";
+        let defaultClkSize = 12;
+        textSize(defaultClkSize);
+        let clkTw = textWidth(clkText);
+        if (clkTw > 50) {
+          textSize(Math.max(6, defaultClkSize * (50 / clkTw)));
+        }
+        text(clkText, 0, this.height / 2 - 12);
       }
     } else {
-      textSize(14);
-      text(
-        this.type === "INPUT" ? `IN: ${this.value}` : `OUT: ${this.value}`,
-        0,
-        0,
-      );
+      let valText = this.type === "INPUT" ? `IN: ${this.value}` : `OUT: ${this.value}`;
+      let defaultValSize = 14;
+      textSize(defaultValSize);
+      let valTw = textWidth(valText);
+      let maxValWidth = this.width - 10;
+      if (valTw > maxValWidth) {
+        textSize(Math.max(6, defaultValSize * (maxValWidth / valTw)));
+      }
+      text(valText, 0, 0);
     }
 
     pop();

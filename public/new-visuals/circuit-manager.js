@@ -74,6 +74,7 @@ export class CircuitManager {
 
     drillInto(comp) {
         if (!comp?.gate?.rootNodes) return;
+        // Strictly use the instance name!
         this.drillIntoCircuit(comp.gate, comp.gate.name);
     }
 
@@ -685,7 +686,8 @@ export class CircuitManager {
                         const ln = gn.logicNode;
                         // If this block is a CompositeNode holding a SubCircuit, drill down!
                         if (ln && ln.subCircuit && ln.subCircuit.rootNodes) {
-                            this.drillIntoCircuit(ln.subCircuit, ln.subCircuit.name || gn.label);
+                            // Strictly use the instance name!
+                            this.drillIntoCircuit(ln.subCircuit, ln.name);
                         }
                         return;
                     }
@@ -743,6 +745,7 @@ export class CircuitManager {
         for (let comp of this.components) {
             if (comp.isHit(worldPt.x, worldPt.y)) {
                 if (comp.type === 'CIRCUIT' && comp.gate?.rootNodes) {
+                    // Strictly use the instance name!
                     this.drillIntoCircuit(comp.gate, comp.gate.name);
                 } else {
                     comp.toggleState();

@@ -105,13 +105,22 @@ export class GraphNode {
         let bg = color(255);
         let border = color(0);
         let textCol = color(20);
+        let sWeight = isFeedback ? 2.5 : 1.5;
 
         // Standardize the block's main color based on its first output
         const blockVal = valArray[0] ?? 0;
         const parsedBlockVal = blockVal === 1 ? 1 : 0;
 
+        // Define the color based on the current state (Green for 1, Red for 0)
+        const stateColor = parsedBlockVal === 1 ? color(76, 175, 80) : color(244, 67, 54);
+
+        const subLabels = [];
+
+        // Apply styles for Inputs
         if (this.kind === 'GRAPH_INPUT') {
-            bg = parsedBlockVal === 1 ? color(200, 235, 200) : color(255, 210, 210);
+            border = stateColor;
+            sWeight = 3;
+            subLabels.push({ text: '[input]', col: stateColor });
         } else if (this.kind === 'GRAPH_CLOCK') {
             bg = color(200, 220, 255);
         } else if (this.kind === 'GRAPH_FEEDBACK') {
@@ -121,13 +130,15 @@ export class GraphNode {
             bg = color(245, 245, 220);
         }
 
+        // Apply styles for Outputs (Root Nodes)
         if (isRoot) {
-            stroke(40, 160, 80);
-            strokeWeight(3);
-        } else {
-            stroke(border);
-            strokeWeight(isFeedback ? 2.5 : 1.5);
+            border = stateColor;
+            sWeight = 3;
+            subLabels.push({ text: '[output]', col: stateColor });
         }
+
+        stroke(border);
+        strokeWeight(sWeight);
 
         fill(bg);
         rectMode(CENTER);
@@ -137,25 +148,25 @@ export class GraphNode {
         noStroke();
         textFont(font);
         textAlign(CENTER, CENTER);
-        textSize(11);
+
+        // --- Dynamic Text Size Logic ---
+        let defaultLabelSize = 11;
+        textSize(defaultLabelSize);
+        let titleTw = textWidth(this.label);
+        let maxTitleWidth = this.w - 10; // 5px padding on each side
+
+        if (titleTw > maxTitleWidth) {
+            // Scale size down if the text is wider than the allowed box width
+            textSize(Math.max(5, defaultLabelSize * (maxTitleWidth / titleTw)));
+        }
+
         text(this.label, 0, -5);
 
         // 1. Draw Output Pins & Value Badges
         for (let i = 0; i < this.outputPins.length; i++) {
             const pin = this.outputPins[i];
             const py = pin.worldY - this.y;
-
-            const pinVal = valArray[i] ?? 0;
-            const parsedVal = pinVal === 1 ? 1 : 0;
-
-            // Colored Badge
-            fill(parsedVal === 1 ? '#4CAF50' : '#888');
-            ellipse(this.w / 2 - 10, py, 16, 16);
-
-            fill(255);
-            textSize(9);
-            text(parsedVal, this.w / 2 - 10, py);
-
+           
             // Output Pin Dot
             fill(60);
             ellipse(this.w / 2, py, 8, 8);
@@ -167,11 +178,12 @@ export class GraphNode {
             ellipse(-this.w / 2, pin.worldY - this.y, 8, 8);
         }
 
-        const subLabels = [];
-        if (isRoot) subLabels.push({ text: '[output]', col: color(40, 160, 80) });
-        if (this.kind === 'GRAPH_FEEDBACK')
+        // Handle Feedback labels
+        if (this.kind === 'GRAPH_FEEDBACK') {
             subLabels.push({ text: '[stored]', col: color(120, 60, 180) });
+        }
 
+        // Draw all sub-labels at the bottom
         for (let i = 0; i < subLabels.length; i++) {
             fill(subLabels[i].col);
             noStroke();
