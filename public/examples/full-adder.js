@@ -61,6 +61,7 @@ import { Circuit } from "../lib/circuit.js";
 import { InputNode, GateNode, CompositeNode, SubCircuitOutputNode } from "../lib/nodes.js";
 import { STANDARD_GATES } from "../lib/common-gates.js";
 import { createHalfAdder } from "./half-adder.js";
+import { CircuitRegistry } from "../new-visuals/circuit-registry.js";
 
 export function createFullAdder(delay = 0) {
     // Get the half adder circuit template
@@ -74,7 +75,7 @@ export function createFullAdder(delay = 0) {
     // STAGE 1: First half adder adds A and B
     // This gives us A+B in two outputs: sum and carry
     const halfAdder1 = new CompositeNode(halfAdder, [A, B], "A_B_HalfAdder");
-    
+
     // Extract the outputs from first half adder:
     const Sum1 = new SubCircuitOutputNode(halfAdder1, 0, "Sum1");   // A XOR B
     const Carry1 = new SubCircuitOutputNode(halfAdder1, 1, "Carry1"); // A AND B
@@ -82,7 +83,7 @@ export function createFullAdder(delay = 0) {
     // STAGE 2: Second half adder adds the result (Sum1) with Cin
     // This completes the three-input addition
     const halfAdder2 = new CompositeNode(halfAdder, [Sum1, Cin], "Sum1_Cin_HalfAdder");
-    
+
     // Extract outputs from second half adder:
     const Sum = new SubCircuitOutputNode(halfAdder2, 0, "Sum");   // Final sum: (A XOR B) XOR Cin
     const Carry2 = new SubCircuitOutputNode(halfAdder2, 1, "Carry2"); // Second carry: (A XOR B) AND Cin
@@ -99,3 +100,44 @@ export function createFullAdder(delay = 0) {
 
     return circuit;
 }
+
+CircuitRegistry.save("FullAdder", {
+    components: [
+        {
+            id: 0, type: "CIRCUIT", x: 0, y: 0, gridSize: 20,
+            gate: createFullAdder()
+        },
+        { id: 1, type: "INPUT", x: -200, y: 80, gridSize: 20, gate: null, value: 0 },
+        { id: 2, type: "OUTPUT", x: 200, y: -40, gridSize: 20, gate: null, value: 0 },
+        { id: 3, type: "OUTPUT", x: 200, y: 40, gridSize: 20, gate: null, value: 0 },
+        { id: 4, type: "INPUT", x: -200, y: -80, gridSize: 20, gate: null, value: 0 },
+        { id: 5, type: "INPUT", x: -200, y: 0, gridSize: 20, gate: null, value: 0 }
+    ],
+    wires: [
+        {
+            startCompId: 4, startNodeType: "OUTPUT", startNodeIndex: 0,
+            endCompId: 0, endNodeType: "INPUT", endNodeIndex: 0,
+            waypoints: [{ x: -120, y: -80 }, { x: -120, y: -40 }], invertU: 0
+        },
+        {
+            startCompId: 5, startNodeType: "OUTPUT", startNodeIndex: 0,
+            endCompId: 0, endNodeType: "INPUT", endNodeIndex: 1,
+            waypoints: [], invertU: 0
+        },
+        {
+            startCompId: 1, startNodeType: "OUTPUT", startNodeIndex: 0,
+            endCompId: 0, endNodeType: "INPUT", endNodeIndex: 2,
+            waypoints: [{ x: -120, y: 80 }, { x: -120, y: 40 }], invertU: 0
+        },
+        {
+            startCompId: 0, startNodeType: "OUTPUT", startNodeIndex: 1,
+            endCompId: 3, endNodeType: "INPUT", endNodeIndex: 0,
+            waypoints: [{ x: 120, y: 20 }, { x: 120, y: 40 }], invertU: 0
+        },
+        {
+            startCompId: 0, startNodeType: "OUTPUT", startNodeIndex: 0,
+            endCompId: 2, endNodeType: "INPUT", endNodeIndex: 0,
+            waypoints: [{ x: 120, y: -20 }, { x: 120, y: -40 }], invertU: 0
+        }
+    ]
+});

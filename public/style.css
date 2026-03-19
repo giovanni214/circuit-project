@@ -1,26 +1,27 @@
 /* Reset some default browser styles */
 * {
-	margin: 0;
-	padding: 0;
-	box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-body, html {
-	font-family: Arial, sans-serif;
-	background-color: #f4f4f4;
-	color: #333;
-	line-height: 1.6;
-    margin: 0;
-    padding: 0;
-    overflow: hidden; /* Prevents scrollbars from appearing */
-    touch-action: none; /* Disables browser pinch-to-zoom and swipe-to-scroll */
+body,
+html {
+  font-family: Arial, sans-serif;
+  background-color: #f4f4f4;
+  color: #333;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevents scrollbars from appearing */
+  touch-action: none; /* Disables browser pinch-to-zoom and swipe-to-scroll */
 }
 
 body {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Style for headings */
@@ -30,37 +31,40 @@ h3,
 h4,
 h5,
 h6 {
-	margin-bottom: 1rem;
-	font-weight: bold;
+  margin-bottom: 1rem;
+  font-weight: bold;
 }
 
 h1 {
-	flex-shrink: 0;
+  flex-shrink: 0;
 }
 
 /* Update this block in style.css */
 #canvas-container {
-    flex: 1;
-    overflow: hidden;
-    min-height: 0; /* This prevents the flex child from expanding beyond its parent */
-    position: relative;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0; /* This prevents the flex child from expanding beyond its parent */
+  position: relative;
 }
 
 #canvas-container canvas {
-    display: block;
+  display: block;
+  touch-action: none; /* Prevents the page from scrolling while drawing wires */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Style for paragraphs */
 p {
-	margin-bottom: 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Default link styles */
 a {
-	color: #007bff;
-	text-decoration: none;
+  color: #007bff;
+  text-decoration: none;
 }
 
 a:hover {
-	text-decoration: underline;
+  text-decoration: underline;
 }

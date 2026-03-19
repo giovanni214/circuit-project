@@ -18,16 +18,7 @@ window.setup = function () {
     manager.viewport.x = width / 2;
     manager.viewport.y = height / 2;
 
-    window.test = createFullAdder(); // ← TEST THE FULL-ADDER CREATION FUNCTION
-
-    // Spawn the Full Adder and test components
-    manager.addComponent('CIRCUIT', 0, 0, createFullAdder());
-    manager.addComponent('INPUT', -200, 0); // A
-    manager.addComponent('INPUT', -200, 40); // B
-    manager.addComponent('INPUT', -200, 80); // Cin
-    manager.addComponent('OUTPUT', 200, -40); // S
-    manager.addComponent('OUTPUT', 200, 30); // Q-Not
-
+    manager.load("FullAdder");
     manager.stepSimulation();
 
     // NEW: Automatically sync canvas size whenever the container's layout settles or shifts
@@ -77,3 +68,20 @@ window.windowResized = function () {
     resizeCanvas(container.offsetWidth, container.offsetHeight);
 };
 
+// In your global scope where CircuitManager is instantiated (e.g., let manager = new CircuitManager())
+
+function touchStarted() {
+    // Map p5 touch structure to simple x,y for the manager
+    const t = touches.map(p => ({ x: p.x, y: p.y }));
+    manager.handleTouchStart(t);
+}
+
+function touchMoved() {
+    const t = touches.map(p => ({ x: p.x, y: p.y }));
+    manager.handleTouchMove(t);
+    return false; // Critical: stops the "pull-to-refresh" on Chrome/Safari
+}
+
+function touchEnded() {
+    manager.handleTouchEnd();
+}

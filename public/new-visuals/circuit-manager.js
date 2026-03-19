@@ -199,9 +199,11 @@ export class CircuitManager {
         const trimmed = name.trim();
         const snapshot = this.serialize();
         CircuitRegistry.save(trimmed, snapshot);
+        console.log(snapshot);
         alert(`Circuit "${trimmed}" saved! You can now load it from the registry.`);
     }
 
+    //seperate prompt from load
     promptLoad() {
         const names = CircuitRegistry.list();
 
@@ -220,6 +222,10 @@ export class CircuitManager {
             name = names[asIndex - 1];
         }
 
+        this.load(name);
+    }
+
+    load(name) {
         const snapshot = CircuitRegistry.load(name);
         if (!snapshot) {
             alert(`No circuit found named "${name}".`);
@@ -237,7 +243,6 @@ export class CircuitManager {
 
         console.log(`[Registry] Loaded "${name}"`);
     }
-
     // ── Wire Drawing ────────────────────────────────────────────
 
     finishWire(endNode) {
@@ -486,11 +491,6 @@ export class CircuitManager {
     }
 
     handleMousePress(mx, my) {
-        if (mouseButton === RIGHT) {
-            if (this.state === 'DRAWING_WIRE') this.cancelWireDraw();
-            return;
-        }
-
         if (this.isInspecting()) {
             if (mx >= width - 110 && mx <= width - 14 && my >= 8 && my <= 32) {
                 this.drillOut();
@@ -772,7 +772,26 @@ export class CircuitManager {
             }
         }
     }
+    // Add these to the CircuitManager class
+    handleTouchStart(touches) {
+        if (touches.length > 0) {
+            this.handleMousePress(touches[0].x, touches[0].y);
+        }
+        return false; // Prevent default browser behavior
+    }
 
+    handleTouchMove(touches) {
+        if (touches.length > 0) {
+            this.handleMouseDrag(touches[0].x, touches[0].y);
+        }
+        return false;
+    }
+
+    handleTouchEnd() {
+        this.handleMouseRelease();
+        return false;
+    }
+    
     handleKeyDown(key, keyCode) {
         if (this.isInspecting()) {
             if (key === 'Escape') this.drillOut();
