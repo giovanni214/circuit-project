@@ -16,6 +16,13 @@ body, html {
     touch-action: none; /* Disables browser pinch-to-zoom and swipe-to-scroll */
 }
 
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
 /* Style for headings */
 h1,
 h2,
@@ -25,6 +32,19 @@ h5,
 h6 {
 	margin-bottom: 1rem;
 	font-weight: bold;
+}
+
+h1 {
+	flex-shrink: 0;
+}
+
+#canvas-container {
+    flex: 1;
+    overflow: hidden;
+}
+
+#canvas-container canvas {
+    display: block;
 }
 
 /* Style for paragraphs */

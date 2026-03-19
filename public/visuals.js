@@ -1,26 +1,28 @@
 import { CircuitManager } from './new-visuals/circuit-manager.js';
-import { createDFlipFlop } from "./examples/d-flip-flop.js"; 
+import { createDFlipFlop } from "./examples/d-flip-flop.js";
 
 let font;
 const manager = new CircuitManager();
 
-window.preload = function() {
+window.preload = function () {
     font = loadFont("/fonts/ttf/JetBrainsMono-SemiBold.ttf");
 };
 
-window.setup = function() {
-    createCanvas(windowWidth, windowHeight);
+window.setup = function () {
+    const container = document.getElementById('canvas-container');
+    createCanvas(container.offsetWidth, container.offsetHeight).parent(container);
     textFont(font);
 
     window.test = createDFlipFlop(); // ← TEST THE D-FLIP-FLOP CREATION FUNCTION
 
     // Spawn the D-Flip-Flop and test components
     manager.addComponent('CIRCUIT', 300, 200, createDFlipFlop());
-    manager.addComponent('INPUT', 100, 180); // D
-    manager.addComponent('OUTPUT', 500, 180); // Q
-    manager.addComponent('OUTPUT', 500, 220); // Q-Not
+    manager.addComponent('INPUT', 100, 200); // D
+    manager.addComponent('OUTPUT', 500, 150); // Q
+    manager.addComponent('OUTPUT', 500, 240); // Q-Not
+
+    manager.stepSimulation();
 };
-// ... rest of sketch.js remains the same ...
 
 window.draw = function () {
     background(245);

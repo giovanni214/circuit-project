@@ -61,7 +61,6 @@ export class Circuit {
 		if (!this.feedbackNodes.includes(node)) {
 			this.feedbackNodes.push(node);
 		}
-		this.feedbackNodes.push(node);
 	} // ----------------------------------------------------- // 4.2) Compute inputLength & outputLength // -----------------------------------------------------
 
 	#computeInputLength(node, visited = new Set()) {
@@ -229,6 +228,7 @@ export class Circuit {
 
 		this.history.push({
 			tick: this.totalTicks,
+			inputs: [...inputs],
 			subHistory,
 			unstable: !isStable
 		});
