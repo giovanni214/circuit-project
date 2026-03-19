@@ -1,3 +1,5 @@
+// File: public/new-visuals/circuit-manager.js
+
 import { Viewport } from './viewport.js';
 import { VisualComponent } from './visual-component.js';
 import { Wire } from './wire.js';
@@ -15,12 +17,6 @@ export class CircuitManager {
         this.startNode = null;
         this.waypoints = [];
         this.activeWaypointIndex = -1;
-
-        // Internal press tracking
-        this.pressStartTime = 0;
-        this.pressStartX = 0;
-        this.pressStartY = 0;
-        this.longPressFired = false;
 
         this.gridSize = 20;
         this.inspectedComponent = null;
@@ -364,23 +360,6 @@ export class CircuitManager {
             }
         }
 
-        if (this.pressStartTime > 0 && !this.longPressFired && !this.isInspecting()) {
-            let holdTime = millis() - this.pressStartTime;
-            if (holdTime > 500) {
-                // Delete the item!
-                this.handleLongPress(this.pressStartX, this.pressStartY);
-                this.longPressFired = true;
-            } else if (holdTime > 150) {
-                // Draw a shrinking red loading circle around the finger/mouse
-                const worldPt = this.viewport.getWorldCoords(this.pressStartX, this.pressStartY);
-                noFill();
-                stroke(255, 60, 60, map(holdTime, 150, 500, 0, 255));
-                strokeWeight(4 / this.viewport.zoom);
-                let r = map(holdTime, 150, 500, 40, 5) / this.viewport.zoom;
-                ellipse(worldPt.x, worldPt.y, r, r);
-            }
-        }
-
         pop();
 
         if (this.inspectedComponent) {
@@ -459,75 +438,15 @@ export class CircuitManager {
 
     // ── Input Handling ──────────────────────────────────────────
 
-    handleLongPress(mx, my) {
-        if (this.isInspecting()) return;
-
-        // Instantly kill any accidental wire draws that started when the screen was first touched
-        this.cancelWireDraw();
-
-        const worldPt = this.viewport.getWorldCoords(mx, my);
-
-        // Check if a wire was long-pressed
-        for (let wire of this.wires) {
-            if (wire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
-                wire.endNode.value = 0;
-                if (wire.endNode.parent) wire.endNode.parent.updateLogic();
-
-                this.wires = this.wires.filter(w => w !== wire);
-
-                if (typeof navigator.vibrate === "function") {
-                    navigator.vibrate(50);
-                }
-
-                this.state = 'IDLE';
-                this.activeElement = null;
-                this.branchParentWire = null;
-                return;
-            }
-        }
-
-        // Check if a component was long-pressed
-        for (let comp of this.components) {
-            if (comp.isHit(worldPt.x, worldPt.y)) {
-                this.wires
-                    .filter(w => w.startNode.parent === comp)
-                    .forEach(w => {
-                        w.endNode.value = 0;
-                        if (w.endNode.parent) w.endNode.parent.updateLogic();
-                    });
-
-                this.components = this.components.filter(c => c !== comp);
-                this.wires = this.wires.filter(
-                    w => w.startNode.parent !== comp && w.endNode.parent !== comp
-                );
-
-                if (typeof navigator.vibrate === "function") {
-                    navigator.vibrate(50);
-                }
-
-                this.state = 'IDLE';
-                this.activeElement = null;
-                return;
-            }
-        }
-    }
-
     handleMouseDrag(mx, my) {
         if (this.isInspecting()) {
             this.viewport.updatePan(mx, my);
             return;
         }
 
-        if (dist(mx, my, this.pressStartX, this.pressStartY) > 20) {
-            const holdTime = millis() - this.pressStartTime;
-            if (holdTime < 150) {
-                this.longPressFired = true;
-            }
-        }
-
         if (this.state === 'PREPARE_BRANCH' && this.activeElement instanceof Wire) {
-            const holdTime = millis() - this.pressStartTime;
-            if (holdTime < 150 && dist(mx, my, this.branchScreenX, this.branchScreenY) > 15) {
+            // Drag distance check to initiate branch creation
+            if (dist(mx, my, this.branchScreenX, this.branchScreenY) > 15) {
                 const wire = this.activeElement;
                 const insertIndex = wire.insertWaypointAt(this.branchStartX, this.branchStartY, this.gridSize);
 
@@ -568,11 +487,6 @@ export class CircuitManager {
             this.viewport.startPan(mx, my);
             return;
         }
-
-        this.pressStartTime = millis();
-        this.pressStartX = mx;
-        this.pressStartY = my;
-        this.longPressFired = false;
 
         const worldPt = this.viewport.getWorldCoords(mx, my);
         const hitRadius = 10 / this.viewport.zoom;
@@ -685,8 +599,6 @@ export class CircuitManager {
 
     handleMouseRelease() {
         if (this.isInspecting()) return;
-
-        this.pressStartTime = 0;
 
         let worldPt = this.viewport.getWorldCoords(mouseX, mouseY);
 
