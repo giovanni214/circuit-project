@@ -1,24 +1,27 @@
 // Helper function at the top of nodes.js
-function createDefaultContext() {
-  return {
-    nodeStringCache: new Map()
-  };
+export function createDefaultContext() {
+	return {
+		nodeStringCache: new Map()
+	};
 }
 
 export class Node {
+	constructor(name) {
+		this.name = name || null;
+	}
+
 	evaluate(circuit, inputs) {
 		throw new Error("evaluate() not implemented for base Node.");
 	}
-  
-	// The signature is now clean, expecting the context to be passed in.
-	toString(context = createDefaultContext) {
+
+	toString(context = createDefaultContext()) {
 		throw new Error("toString() not implemented for base Node.");
 	}
 }
 
 export class LiteralNode extends Node {
-	constructor(value) {
-		super();
+	constructor(value, name) {
+		super(name || String(value));
 		this.value = value;
 	}
 
@@ -27,13 +30,13 @@ export class LiteralNode extends Node {
 	}
 
 	toString(context = createDefaultContext()) {
-		return `${this.value}`;
+		return this.name;
 	}
 }
 
 export class InputNode extends Node {
-	constructor(index) {
-		super();
+	constructor(index, name) {
+		super(name || `IN_${index}`);
 		this.index = index;
 	}
 
@@ -42,28 +45,33 @@ export class InputNode extends Node {
 	}
 
 	toString(context = createDefaultContext()) {
-		return `Input[${this.index}]`;
+		return this.name;
 	}
 }
 
 export class ClockNode extends Node {
+	constructor(name) {
+		super(name || "CLK");
+	}
+
 	evaluate(circuit, inputs) {
 		return circuit.clock;
 	}
+
 	toString(context = createDefaultContext()) {
-		return "CLK";
+		return this.name;
 	}
 }
 
 export class GateNode extends Node {
 	constructor(gateType, inputNodes, delay = 0, name) {
-		super();
+		super(name || `${gateType}_${Math.random().toString(36).substr(2, 5)}`);
 		this.gateType = gateType;
 		this.inputNodes = inputNodes;
 		this.delay = delay;
 		this.lastValue = 0;
-		this.name = name || `${gateType}_${Math.random().toString(36).substr(2, 5)}`; // Assign a random ID if no name is given
 	}
+
 	evaluate(circuit, inputs) {
 		const gateFunc = circuit.getGate(this.gateType);
 		if (typeof gateFunc !== "function") {
@@ -71,14 +79,13 @@ export class GateNode extends Node {
 		}
 		const childVals = this.inputNodes.map((n) => n.evaluate(circuit, inputs));
 		const newValue = gateFunc(childVals);
+
 		if (this.delay > 0) {
 			const targetTick = circuit.currentTick + this.delay;
 			const description = `Update gate '${this.name}' to value ${newValue}`;
 			circuit.scheduler.scheduleEvent(
 				targetTick,
-				() => {
-					this.lastValue = newValue;
-				},
+				() => { this.lastValue = newValue; },
 				description
 			);
 			return this.lastValue;
@@ -87,7 +94,7 @@ export class GateNode extends Node {
 			return newValue;
 		}
 	}
-	// CORRECTED toString using the cache
+
 	toString(context = createDefaultContext()) {
 		if (context.nodeStringCache.has(this)) return context.nodeStringCache.get(this);
 
@@ -104,9 +111,8 @@ export class GateNode extends Node {
 }
 
 export class CompositeNode extends Node {
-	constructor(subCircuit, inputNodes) {
-		super();
-		// This check is now safer and avoids the circular import.
+	constructor(subCircuit, inputNodes, name) {
+		super(name || subCircuit.name || "COMP");
 		if (!subCircuit || typeof subCircuit.clone !== "function") {
 			throw new Error("CompositeNode requires a valid Circuit instance.");
 		}
@@ -133,21 +139,23 @@ export class CompositeNode extends Node {
 		return this.cachedOutputs;
 	}
 
-	// CORRECTED toString using the cache
 	toString(context = createDefaultContext()) {
-		if (context.nodeStringCache.has(this)) {
-			return context.nodeStringCache.get(this);
-		}
+		if (context.nodeStringCache.has(this)) return context.nodeStringCache.get(this);
+
 		const childStrs = this.inputNodes.map((child) => child.toString(context));
-		const result = `${this.subCircuit.name}(${childStrs.join(", ")})`;
+		const result = `${this.name}(${childStrs.join(", ")})`;
 		context.nodeStringCache.set(this, result);
 		return result;
 	}
 }
 
 export class SubCircuitOutputNode extends Node {
-	constructor(compositeNode, outputIndex) {
-		super();
+	constructor(compositeNode, outputIndex, name) {
+		// Extract the human-readable root node name from the sub-circuit
+		const rootNodeName = compositeNode.subCircuit.rootNodes?.[outputIndex]?.name;
+
+		super(name || rootNodeName || `${compositeNode.name}[${outputIndex}]`);
+
 		if (!(compositeNode instanceof CompositeNode)) {
 			throw new Error("SubCircuitOutputNode requires a CompositeNode as its input.");
 		}
@@ -166,18 +174,17 @@ export class SubCircuitOutputNode extends Node {
 	}
 
 	toString(context = createDefaultContext()) {
-		return `${this.compositeNode.toString(context)}[${this.outputIndex}]`;
+		return this.name;
 	}
 }
 
 export class FeedbackNode extends Node {
 	constructor(inputNode, initialValue = 0, delay = 0, name = "Q") {
-		super();
+		super(name);
 		this.inputNode = inputNode;
 		this.initialValue = initialValue;
 		this.currentValue = initialValue;
 		this.delay = delay;
-		this.name = name;
 	}
 
 	evaluate(circuit, inputs) {
@@ -192,9 +199,7 @@ export class FeedbackNode extends Node {
 			const description = `Update gate '${this.name}' to value ${newValue}`;
 			circuit.scheduler.scheduleEvent(
 				targetTick,
-				() => {
-					this.currentValue = newValue;
-				},
+				() => { this.currentValue = newValue; },
 				description
 			);
 		} else {
@@ -202,15 +207,11 @@ export class FeedbackNode extends Node {
 		}
 	}
 
-	// CORRECTED toString using the cache
 	toString(context = createDefaultContext()) {
 		if (context.nodeStringCache.has(this)) return context.nodeStringCache.get(this);
 
-		// Mark ourselves as visited with our simple name.
 		context.nodeStringCache.set(this, this.name);
 		const expr = this.inputNode ? this.inputNode.toString(context) : "null";
-
-		// The final string representation is the full equation.
 		return `${this.name} = ${expr}`;
 	}
 }

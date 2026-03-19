@@ -1,5 +1,5 @@
 import { CircuitManager } from './new-visuals/circuit-manager.js';
-import { createDFlipFlop } from "./examples/d-flip-flop.js";
+import { createFullAdder } from "./examples/full-adder.js";
 
 let font;
 const manager = new CircuitManager();
@@ -18,12 +18,14 @@ window.setup = function () {
     manager.viewport.x = width / 2;
     manager.viewport.y = height / 2;
 
-    window.test = createDFlipFlop(); // ← TEST THE D-FLIP-FLOP CREATION FUNCTION
+    window.test = createFullAdder(); // ← TEST THE FULL-ADDER CREATION FUNCTION
 
-    // Spawn the D-Flip-Flop and test components
-    manager.addComponent('CIRCUIT', 0, 0, createDFlipFlop());
-    manager.addComponent('INPUT', -200, 0); // D
-    manager.addComponent('OUTPUT', 200, -40); // Q
+    // Spawn the Full Adder and test components
+    manager.addComponent('CIRCUIT', 0, 0, createFullAdder());
+    manager.addComponent('INPUT', -200, 0); // A
+    manager.addComponent('INPUT', -200, 40); // B
+    manager.addComponent('INPUT', -200, 80); // Cin
+    manager.addComponent('OUTPUT', 200, -40); // S
     manager.addComponent('OUTPUT', 200, 30); // Q-Not
 
     manager.stepSimulation();

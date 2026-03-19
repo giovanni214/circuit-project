@@ -1,6 +1,6 @@
 import { collectNodes, assignLayers, layoutNodes, nodeLabel, nodeKind } from './node-layout.js';
 import { GraphNode } from './graph-visual-component.js';
-import { FeedbackNode } from '../lib/nodes.js';
+import { FeedbackNode, SubCircuitOutputNode } from '../lib/nodes.js';
 
 export class InspectorScene {
     constructor(circuit, gridSize) {
@@ -21,6 +21,12 @@ export class InspectorScene {
         const feedbackSet = new Set(this.circuit.feedbackNodes ?? []);
 
         for (const [logicNode, pos] of positions) {
+            // THE MAGIC TRICK: Skip drawing internal SubCircuitOutputNodes. 
+            // Only draw them if they are acting as the final root outputs of the circuit.
+            if (logicNode instanceof SubCircuitOutputNode && !rootSet.has(logicNode)) {
+                continue;
+            }
+
             const gn = new GraphNode(
                 logicNode,
                 nodeLabel(logicNode),
@@ -34,30 +40,33 @@ export class InspectorScene {
         }
 
         for (const [logicNode, gn] of this.logicToGraph) {
-            const addEdge = (srcLogic, inputIndex) => {
+            // We now explicitly route edges to a specific outputIndex
+            const addEdge = (srcLogic, inputIndex, outputIndex = 0) => {
                 const src = this.logicToGraph.get(srcLogic);
                 if (!src) return;
-                // A feedback edge goes right-to-left (or same column) in the layout
                 const isFeedback = src.x >= gn.x;
-                this.edges.push({ from: src, to: gn, inputIndex, isFeedback });
+                this.edges.push({ from: src, to: gn, inputIndex, outputIndex, isFeedback });
             };
 
-            // Cover every property convention from nodes.js
-            if (logicNode.inputNodes) {
-                // GateNode, CompositeNode
-                logicNode.inputNodes.forEach((inp, i) => addEdge(inp, i));
-            }
-            if (logicNode.inputs) {
-                // legacy / custom nodes
-                logicNode.inputs.forEach((inp, i) => addEdge(inp, i));
-            }
+            const inps = logicNode.inputNodes ?? logicNode.inputs ?? [];
+            inps.forEach((inp, i) => {
+                if (inp instanceof SubCircuitOutputNode) {
+                    // Bypass the proxy node! Connect directly to the CompositeNode's specific pin!
+                    addEdge(inp.compositeNode, i, inp.outputIndex);
+                } else {
+                    addEdge(inp, i, 0);
+                }
+            });
+            
             if (logicNode.inputNode) {
-                // FeedbackNode
-                addEdge(logicNode.inputNode, 0);
+                if (logicNode.inputNode instanceof SubCircuitOutputNode) {
+                    addEdge(logicNode.inputNode.compositeNode, 0, logicNode.inputNode.outputIndex);
+                } else {
+                    addEdge(logicNode.inputNode, 0, 0);
+                }
             }
             if (logicNode.compositeNode) {
-                // SubCircuitOutputNode
-                addEdge(logicNode.compositeNode, 0);
+                addEdge(logicNode.compositeNode, 0, logicNode.outputIndex);
             }
         }
 
@@ -65,155 +74,204 @@ export class InspectorScene {
         this._feedbackSet = feedbackSet;
     }
 
-    _drawForwardEdge(fromPin, toPin, val) {
-        stroke(val === 1 ? '#4CAF50' : '#888888');
-        strokeWeight(2.5);
-        noFill();
-        const midX = (fromPin.worldX + toPin.worldX) / 2;
-        beginShape();
-        vertex(fromPin.worldX, fromPin.worldY);
-        vertex(midX, fromPin.worldY);
-        vertex(midX, toPin.worldY);
-        vertex(toPin.worldX, toPin.worldY);
-        endShape();
+    // ── Segment builders ─────────────────────────────────────────────────────
+
+    _getEdgeValue(edge) {
+        const rawVal = edge.from.getValue();
+        const valArray = Array.isArray(rawVal) ? rawVal : [rawVal];
+        
+        // Directly grab the value for this specific edge's output pin
+        const pinVal = valArray[edge.outputIndex] ?? 0;
+        return pinVal === 1 ? 1 : 0;
     }
 
-    _drawFeedbackEdge(fromPin, toPin, val) {
-        const col = val === 1 ? '#4CAF50' : '#BB88FF';
+    _forwardSegments(edge) {
+        // Use the specific output pin instead of defaulting to 0
+        const fromPin = edge.from.outputPins[edge.outputIndex] ?? edge.from.outputPins[0];
+        const toPin = edge.to.inputPins[edge.inputIndex] ?? edge.to.inputPins[0];
+        if (!fromPin || !toPin) return null;
 
-        // Route the loop BELOW both nodes so it's visually distinct
+        const inputCount = edge.to.inputPins.length || 1;
+        const spread = this.gridSize * 1.5;
+        const offset = (edge.inputIndex - (inputCount - 1) / 2) * spread;
+
+        const baseMidX = (fromPin.worldX + toPin.worldX) / 2;
+        const lo = Math.min(fromPin.worldX, toPin.worldX) + this.gridSize;
+        const hi = Math.max(fromPin.worldX, toPin.worldX) - this.gridSize;
+        const midX = Math.max(lo, Math.min(hi, baseMidX + offset));
+
+        const parsedVal = this._getEdgeValue(edge);
+        const col = parsedVal === 1 ? '#4CAF50' : '#888888';
+
+        return {
+            col,
+            isDashed: false,
+            fromPin, toPin,
+            hSegs: [
+                { x1: fromPin.worldX, y1: fromPin.worldY, x2: midX, y2: fromPin.worldY },
+                { x1: midX, y1: toPin.worldY, x2: toPin.worldX, y2: toPin.worldY },
+            ],
+            vSegs: [
+                { x1: midX, y1: fromPin.worldY, x2: midX, y2: toPin.worldY },
+            ],
+            arrowTo: null,
+            label: null,
+        };
+    }
+
+    _feedbackSegments(edge) {
+        // Use the specific output pin instead of defaulting to 0
+        const fromPin = edge.from.outputPins[edge.outputIndex] ?? edge.from.outputPins[0];
+        const toPin = edge.to.inputPins[edge.inputIndex] ?? edge.to.inputPins[0];
+        if (!fromPin || !toPin) return null;
+
+        const parsedVal = this._getEdgeValue(edge);
+        const col = parsedVal === 1 ? '#4CAF50' : '#888888';
+        
         const loopY = Math.max(fromPin.worldY, toPin.worldY) + this.gridSize * 6;
         const stubOut = fromPin.worldX + this.gridSize * 3;
         const stubIn = toPin.worldX - this.gridSize * 3;
 
-        stroke(col);
-        strokeWeight(2.5);
-        noFill();
-
-        // Draw each segment manually — no beginShape so no strokeDash crash
-        // Leg 1: exit source output pin rightward
-        line(fromPin.worldX, fromPin.worldY, stubOut, fromPin.worldY);
-        // Leg 2: drop down to loop level
-        line(stubOut, fromPin.worldY, stubOut, loopY);
-        // Leg 3: travel left under everything
-        line(stubOut, loopY, stubIn, loopY);
-        // Leg 4: rise back up to target input pin
-        line(stubIn, loopY, stubIn, toPin.worldY);
-        // Leg 5: enter target input pin
-        line(stubIn, toPin.worldY, toPin.worldX, toPin.worldY);
-
-        // Arrowhead pointing INTO the target pin
-        fill(col);
-        noStroke();
-        triangle(
-            toPin.worldX, toPin.worldY,
-            toPin.worldX - 9, toPin.worldY - 6,
-            toPin.worldX - 9, toPin.worldY + 6
-        );
-
-        // "feedback" label sitting on the bottom horizontal leg
-        fill(col);
-        noStroke();
-        textSize(10);
-        textAlign(CENTER, BOTTOM);
-        text('feedback', (stubOut + stubIn) / 2, loopY - 4);
+        return {
+            col,
+            isDashed: true,
+            fromPin, toPin,
+            hSegs: [
+                { x1: fromPin.worldX, y1: fromPin.worldY, x2: stubOut, y2: fromPin.worldY },
+                { x1: stubOut, y1: loopY, x2: stubIn, y2: loopY },
+                { x1: stubIn, y1: toPin.worldY, x2: toPin.worldX, y2: toPin.worldY },
+            ],
+            vSegs: [
+                { x1: stubOut, y1: fromPin.worldY, x2: stubOut, y2: loopY },
+                { x1: stubIn, y1: loopY, x2: stubIn, y2: toPin.worldY },
+            ],
+            arrowTo: toPin,
+            label: { text: 'feedback', x: (stubOut + stubIn) / 2, y: loopY - 4 },
+        };
     }
+
+    // ── Main draw ─────────────────────────────────────────────────────────────
 
     draw(font, viewport) {
         push();
         viewport.apply();
 
-        // ── build segment data for all forward edges ──────────────────────────
-        const fwdData = [];
+        const allData = [];
         for (const edge of this.edges) {
-            if (edge.isFeedback) continue;
-            const fromPin = edge.from.outputPin;
-            const toPin =
-                edge.to.inputPins[edge.inputIndex] ?? edge.to.inputPins[0];
-            if (!fromPin || !toPin) continue;
-
-            // Stagger midX per input so wires to the same target don't overlap
-            const inputCount = edge.to.inputPins.length || 1;
-            const spread = this.gridSize * 1.5;
-            const offset = (edge.inputIndex - (inputCount - 1) / 2) * spread;
-
-            const baseMidX = (fromPin.worldX + toPin.worldX) / 2;
-            const lo = Math.min(fromPin.worldX, toPin.worldX) + this.gridSize;
-            const hi = Math.max(fromPin.worldX, toPin.worldX) - this.gridSize;
-            const midX = Math.max(lo, Math.min(hi, baseMidX + offset));
-            fwdData.push({
-                edge, fromPin, toPin, midX,
-                segs: [
-                    {
-                        x1: fromPin.worldX, y1: fromPin.worldY,
-                        x2: midX, y2: fromPin.worldY
-                    },
-                    {
-                        x1: midX, y1: fromPin.worldY,
-                        x2: midX, y2: toPin.worldY
-                    },
-                    {
-                        x1: midX, y1: toPin.worldY,
-                        x2: toPin.worldX, y2: toPin.worldY
-                    },
-                ],
-            });
+            const d = edge.isFeedback
+                ? this._feedbackSegments(edge)
+                : this._forwardSegments(edge);
+            if (d) allData.push({ ...d, edge });
         }
 
+        allData.sort((a, b) => {
+            const va = this._getEdgeValue(a.edge);
+            const vb = this._getEdgeValue(b.edge);
+            return va - vb;
+        });
 
-        // ── find crossing X positions for every horizontal segment ────────────
-        // hopMap key: "edgeIdx-segIdx(0or2)"  value: sorted [] of X values
+        const allVerts = [];
+        for (let i = 0; i < allData.length; i++) {
+            for (const vs of allData[i].vSegs) {
+                allVerts.push({
+                    x: vs.x1,
+                    y1: Math.min(vs.y1, vs.y2),
+                    y2: Math.max(vs.y1, vs.y2),
+                    dataIndex: i,
+                });
+            }
+        }
+
         const hopMap = new Map();
-        for (let i = 0; i < fwdData.length; i++) {
-            for (let j = 0; j < fwdData.length; j++) {
-                if (i === j) continue;
-                const vSeg = fwdData[j].segs[1]; // the vertical segment of j
-                const vx = vSeg.x1;
-                const vy1 = Math.min(vSeg.y1, vSeg.y2);
-                const vy2 = Math.max(vSeg.y1, vSeg.y2);
+        for (let i = 0; i < allData.length; i++) {
+            const di = allData[i];
+            for (let hi = 0; hi < di.hSegs.length; hi++) {
+                const h = di.hSegs[hi];
+                const hx1 = Math.min(h.x1, h.x2);
+                const hx2 = Math.max(h.x1, h.x2);
+                const hy = h.y1;
 
-                for (const si of [0, 2]) {
-                    const h = fwdData[i].segs[si];
-                    const hx1 = Math.min(h.x1, h.x2);
-                    const hx2 = Math.max(h.x1, h.x2);
-                    const hy = h.y1;
+                const crossings = new Set();
+                for (const v of allVerts) {
+                    if (v.dataIndex === i) continue; 
+                    const dj = allData[v.dataIndex];
+                    const sameFrom = di.fromPin.worldX === dj.fromPin.worldX && di.fromPin.worldY === dj.fromPin.worldY;
+                    const sameTo = di.toPin.worldX === dj.toPin.worldX && di.toPin.worldY === dj.toPin.worldY;
+                    if (sameFrom || sameTo) continue;
 
-                    // strict inequality — don't hop on shared endpoints
-                    if (vx > hx1 && vx < hx2 && hy > vy1 && hy < vy2) {
-                        const key = `${i}-${si}`;
-                        if (!hopMap.has(key)) hopMap.set(key, []);
-                        hopMap.get(key).push(vx);
+                    if (v.x > hx1 && v.x < hx2 && hy > v.y1 && hy < v.y2) {
+                        crossings.add(v.x);
                     }
+                }
+                if (crossings.size > 0) {
+                    const key = `${i}-h${hi}`;
+                    hopMap.set(key, [...crossings].sort((a, b) => a - b));
                 }
             }
         }
-        for (const xs of hopMap.values()) xs.sort((a, b) => a - b);
-        
-        // ── draw forward edges ────────────────────────────────────────────────
-        for (let i = 0; i < fwdData.length; i++) {
-            const { edge, fromPin, toPin, midX, segs } = fwdData[i];
-            const val = edge.from.getValue();
-            const col = val === 1 ? '#4CAF50' : '#888888';
-            stroke(col);
+
+        // ── PASS 1: all vertical segments ─────────────────────────────────────
+        for (const d of allData) {
+            stroke(d.col);
             strokeWeight(2.5);
             noFill();
-
-            this._drawHSegWithHops(segs[0], hopMap.get(`${i}-0`) ?? [], col);
-            line(segs[1].x1, segs[1].y1, segs[1].x2, segs[1].y2);
-            this._drawHSegWithHops(segs[2], hopMap.get(`${i}-2`) ?? [], col);
+            
+            if (d.isDashed) drawingContext.setLineDash([8, 6]);
+            else drawingContext.setLineDash([]);
+            
+            for (const vs of d.vSegs) {
+                line(vs.x1, vs.y1, vs.x2, vs.y2);
+            }
         }
 
-        // ── feedback edges ────────────────────────────────────────────────────
-        for (const edge of this.edges) {
-            if (!edge.isFeedback) continue;
-            const fromPin = edge.from.outputPin;
-            const toPin =
-                edge.to.inputPins[edge.inputIndex] ?? edge.to.inputPins[0];
-            if (!fromPin || !toPin) continue;
-            this._drawFeedbackEdge(fromPin, toPin, edge.from.getValue());
+        // ── PASS 2: all horizontal segments (flat lines) ──────────────────────
+        for (const d of allData) {
+            stroke(d.col);
+            strokeWeight(2.5);
+            noFill();
+            
+            if (d.isDashed) drawingContext.setLineDash([8, 6]);
+            else drawingContext.setLineDash([]);
+            
+            for (const hs of d.hSegs) {
+                if (hs.x1 !== hs.x2 || hs.y1 !== hs.y2)
+                    line(hs.x1, hs.y1, hs.x2, hs.y2);
+            }
         }
 
-        // ── nodes on top ──────────────────────────────────────────────────────
+        // ── PASS 3: hop arcs on top of everything ─────────────────────────────
+        for (let i = 0; i < allData.length; i++) {
+            const d = allData[i];
+            for (let hi = 0; hi < d.hSegs.length; hi++) {
+                const hops = hopMap.get(`${i}-h${hi}`);
+                if (hops?.length) this._drawHopsOnly(d.hSegs[hi], hops, d.col, d.isDashed);
+            }
+        }
+
+        drawingContext.setLineDash([]);
+
+        // ── PASS 4: feedback arrowheads + labels ──────────────────────────────
+        for (const d of allData) {
+            if (!d.arrowTo) continue;
+
+            fill(d.col);
+            noStroke();
+            triangle(
+                d.arrowTo.worldX, d.arrowTo.worldY,
+                d.arrowTo.worldX - 9, d.arrowTo.worldY - 6,
+                d.arrowTo.worldX - 9, d.arrowTo.worldY + 6
+            );
+
+            if (d.label) {
+                fill(d.col);
+                noStroke();
+                textSize(10);
+                textAlign(CENTER, BOTTOM);
+                text(d.label.text, d.label.x, d.label.y);
+            }
+        }
+
+        // ── PASS 5: nodes on top of everything ────────────────────────────────
         for (const gn of this.nodes) {
             gn.draw(
                 font,
@@ -225,35 +283,34 @@ export class InspectorScene {
         pop();
     }
 
-    /** Draw a horizontal segment, jumping over each crossing with a small arc. */
-    _drawHSegWithHops(seg, hopXs, col) {
-        const R = 6;
-        stroke(col);
-        strokeWeight(2.5);
-        noFill();
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
+    _drawHopsOnly(seg, hopXs, col, isDashed) {
+        const R = 6;
         const y = seg.y1;
-        // normalise direction so we always travel left→right
         const x1 = Math.min(seg.x1, seg.x2);
         const x2 = Math.max(seg.x1, seg.x2);
-
-        // filter hops that actually lie within this segment
         const hops = hopXs.filter(hx => hx > x1 + R && hx < x2 - R);
+        if (hops.length === 0) return;
 
-        let curX = x1;
         for (const hx of hops) {
-            // line up to the hop
-            if (hx - R > curX) line(curX, y, hx - R, y);
-            // cubic bezier bowing upward (lower Y = up on screen)
+            drawingContext.setLineDash([]);
+            stroke(245);
+            strokeWeight(5);
+            line(hx - R, y, hx + R, y);
+
+            if (isDashed) drawingContext.setLineDash([8, 6]);
+            stroke(col);
+            strokeWeight(2.5);
+            noFill();
             bezier(
                 hx - R, y,
                 hx - R, y - R * 2,
                 hx + R, y - R * 2,
                 hx + R, y
             );
-            curX = hx + R;
         }
-        // remaining tail
-        if (curX < x2) line(curX, y, x2, y);
+        
+        drawingContext.setLineDash([]);
     }
 }

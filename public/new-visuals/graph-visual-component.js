@@ -6,51 +6,66 @@ export class GraphNode {
         this.x = x;
         this.y = y;
         this.gridSize = gridSize;
-        this.circuit = circuit;   // <-- store it
+        this.circuit = circuit;
+
+        // Determine pin counts
+        let outCount = 1;
+        if (logicNode.subCircuit && typeof logicNode.subCircuit.outputLength === 'number') {
+            outCount = logicNode.subCircuit.outputLength;
+        }
+
+        let inCount = 0;
+        const inputArray = logicNode.inputNodes ?? logicNode.inputs ?? [];
+        if (inputArray.length > 0) inCount = inputArray.length;
+        else if (logicNode.inputNode || logicNode.compositeNode) inCount = 1;
+
+        const maxPins = Math.max(inCount, outCount, 1);
 
         this.w = gridSize * 5;
-        this.h = gridSize * 3;
+        // Dynamically scale height to comfortably fit all pins!
+        this.h = Math.max(gridSize * 3, maxPins * gridSize * 2);
 
-        this.outputPin = {
-            worldX: x + this.w / 2,
-            worldY: y,
-            owner: this,
-        };
-
-        this.inputPins = this._buildInputPins();
+        this.inputPins = this._buildInputPins(inCount);
+        this.outputPins = this._buildOutputPins(outCount);
     }
 
-    _buildInputPins() {
-        const node = this.logicNode;
-        const inputs = [];
-
-        // GateNode / CompositeNode → .inputNodes
-        // legacy / custom nodes   → .inputs
-        const inputArray = node.inputNodes ?? node.inputs ?? [];
-
-        if (inputArray.length > 0) {
-            const count = inputArray.length;
-            const spacing = this.gridSize * 2;
-            const totalH = (count - 1) * spacing;
-            for (let i = 0; i < count; i++) {
-                inputs.push({
-                    worldX: this.x - this.w / 2,
-                    worldY: this.y - totalH / 2 + i * spacing,
-                    index: i,
-                    owner: this,
-                });
-            }
-        } else if (node.inputNode || node.compositeNode) {
-            // FeedbackNode (.inputNode) or SubCircuitOutputNode (.compositeNode)
-            inputs.push({
+    _buildInputPins(count) {
+        const pins = [];
+        if (count === 0) return pins;
+        if (count === 1) {
+            pins.push({ worldX: this.x - this.w / 2, worldY: this.y, index: 0, owner: this });
+            return pins;
+        }
+        const spacing = this.gridSize * 2;
+        const totalH = (count - 1) * spacing;
+        for (let i = 0; i < count; i++) {
+            pins.push({
                 worldX: this.x - this.w / 2,
-                worldY: this.y,
-                index: 0,
+                worldY: this.y - totalH / 2 + i * spacing,
+                index: i,
                 owner: this,
             });
         }
+        return pins;
+    }
 
-        return inputs;
+    _buildOutputPins(count) {
+        const pins = [];
+        if (count === 1) {
+            pins.push({ worldX: this.x + this.w / 2, worldY: this.y, index: 0, owner: this });
+            return pins;
+        }
+        const spacing = this.gridSize * 2;
+        const totalH = (count - 1) * spacing;
+        for (let i = 0; i < count; i++) {
+            pins.push({
+                worldX: this.x + this.w / 2,
+                worldY: this.y - totalH / 2 + i * spacing,
+                index: i,
+                owner: this,
+            });
+        }
+        return pins;
     }
 
     getValue() {
@@ -83,14 +98,20 @@ export class GraphNode {
         push();
         translate(this.x, this.y);
 
-        const val = this.getValue();
+        const rawVal = this.getValue();
+        // Force value into an array so we can map it to multiple output pins
+        const valArray = Array.isArray(rawVal) ? rawVal : [rawVal];
 
         let bg = color(255);
         let border = color(0);
         let textCol = color(20);
 
+        // Standardize the block's main color based on its first output
+        const blockVal = valArray[0] ?? 0;
+        const parsedBlockVal = blockVal === 1 ? 1 : 0;
+
         if (this.kind === 'GRAPH_INPUT') {
-            bg = val === 1 ? color(200, 235, 200) : color(255, 210, 210);
+            bg = parsedBlockVal === 1 ? color(200, 235, 200) : color(255, 210, 210);
         } else if (this.kind === 'GRAPH_CLOCK') {
             bg = color(200, 220, 255);
         } else if (this.kind === 'GRAPH_FEEDBACK') {
@@ -119,11 +140,32 @@ export class GraphNode {
         textSize(11);
         text(this.label, 0, -5);
 
-        fill(val === 1 ? '#4CAF50' : '#888');
-        ellipse(this.w / 2 - 10, 6, 16, 16);
-        fill(255);
-        textSize(9);
-        text(val, this.w / 2 - 10, 6);
+        // 1. Draw Output Pins & Value Badges
+        for (let i = 0; i < this.outputPins.length; i++) {
+            const pin = this.outputPins[i];
+            const py = pin.worldY - this.y;
+
+            const pinVal = valArray[i] ?? 0;
+            const parsedVal = pinVal === 1 ? 1 : 0;
+
+            // Colored Badge
+            fill(parsedVal === 1 ? '#4CAF50' : '#888');
+            ellipse(this.w / 2 - 10, py, 16, 16);
+
+            fill(255);
+            textSize(9);
+            text(parsedVal, this.w / 2 - 10, py);
+
+            // Output Pin Dot
+            fill(60);
+            ellipse(this.w / 2, py, 8, 8);
+        }
+
+        // 2. Draw Input Pins
+        for (const pin of this.inputPins) {
+            fill(60);
+            ellipse(-this.w / 2, pin.worldY - this.y, 8, 8);
+        }
 
         const subLabels = [];
         if (isRoot) subLabels.push({ text: '[output]', col: color(40, 160, 80) });
@@ -139,12 +181,5 @@ export class GraphNode {
         }
 
         pop();
-
-        fill(60);
-        noStroke();
-        ellipse(this.outputPin.worldX, this.outputPin.worldY, 8, 8);
-        for (const pin of this.inputPins) {
-            ellipse(pin.worldX, pin.worldY, 8, 8);
-        }
     }
 }
