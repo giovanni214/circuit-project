@@ -3,9 +3,10 @@ import { GraphNode } from './graph-visual-component.js';
 import { FeedbackNode, SubCircuitOutputNode } from '../lib/nodes.js';
 
 export class InspectorScene {
-    constructor(circuit, gridSize) {
+    constructor(circuit, gridSize, pathPrefix = '') {
         this.circuit = circuit;
         this.gridSize = gridSize;
+        this.pathPrefix = pathPrefix; // Save the path prefix
         this.nodes = [];
         this.edges = [];
         this.logicToGraph = new Map();
@@ -21,24 +22,24 @@ export class InspectorScene {
         const feedbackSet = new Set(this.circuit.feedbackNodes ?? []);
 
         for (const [logicNode, pos] of positions) {
-            // THE MAGIC TRICK: Skip drawing internal SubCircuitOutputNodes. 
-            // Only draw them if they are acting as the final root outputs of the circuit.
             if (logicNode instanceof SubCircuitOutputNode && !rootSet.has(logicNode)) {
                 continue;
             }
 
             const gn = new GraphNode(
                 logicNode,
-                nodeLabel(logicNode),
+                nodeLabel(logicNode), // Keep the base label clean (e.g., "A")
                 nodeKind(logicNode),
                 pos.x, pos.y,
                 this.gridSize,
-                this.circuit
+                this.circuit,
+                this.pathPrefix // Pass the breadcrumb path as a separate property
             );
             this.nodes.push(gn);
             this.logicToGraph.set(logicNode, gn);
         }
 
+        // ... (The rest of the _build routing logic remains exactly the same)
         for (const [logicNode, gn] of this.logicToGraph) {
             // We now explicitly route edges to a specific outputIndex
             const addEdge = (srcLogic, inputIndex, outputIndex = 0) => {
@@ -51,13 +52,12 @@ export class InspectorScene {
             const inps = logicNode.inputNodes ?? logicNode.inputs ?? [];
             inps.forEach((inp, i) => {
                 if (inp instanceof SubCircuitOutputNode) {
-                    // Bypass the proxy node! Connect directly to the CompositeNode's specific pin!
                     addEdge(inp.compositeNode, i, inp.outputIndex);
                 } else {
                     addEdge(inp, i, 0);
                 }
             });
-            
+
             if (logicNode.inputNode) {
                 if (logicNode.inputNode instanceof SubCircuitOutputNode) {
                     addEdge(logicNode.inputNode.compositeNode, 0, logicNode.inputNode.outputIndex);

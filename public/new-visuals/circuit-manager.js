@@ -42,6 +42,7 @@ export class CircuitManager {
     // ── Scene Drill-In / Drill-Out ──────────────────────────────
 
     // NEW: A robust drill function that accepts raw circuit data
+    // NEW: A robust drill function that accepts raw circuit data
     drillIntoCircuit(circuitRef, name) {
         if (!circuitRef?.rootNodes) return;
 
@@ -58,8 +59,25 @@ export class CircuitManager {
             zoom: this.viewport.zoom
         });
 
-        // Generate the new inspector view
-        this.inspectorScene = new InspectorScene(circuitRef, this.gridSize);
+        // --- NEW: Calculate the full hierarchy path for node labels ---
+        // --- NEW: Calculate the full hierarchy path for node labels ---
+        let pathNames = [];
+        for (let s of this.sceneStack) {
+            // We ignore 'ROOT' so it doesn't say "ROOT > Full Adder"
+            if (s.crumbName !== 'ROOT') {
+                pathNames.push(s.crumbName);
+            }
+        }
+        // Only append the current name if it exists to avoid trailing arrows
+        if (name) pathNames.push(name);
+
+        // Use a breadcrumb separator instead of a newline!
+        const pathPrefix = pathNames.join(' > ');
+        // -------------------------------------------------------------
+        // -------------------------------------------------------------
+
+        // Generate the new inspector view and pass the pathPrefix
+        this.inspectorScene = new InspectorScene(circuitRef, this.gridSize, pathPrefix);
         this.inspectorCircuitName = name || 'SubCircuit';
 
         this.components = [];

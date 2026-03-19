@@ -1,12 +1,13 @@
 export class GraphNode {
-    constructor(logicNode, label, kind, x, y, gridSize, circuit = null) {
+    constructor(logicNode, label, kind, x, y, gridSize, circuit = null, pathPrefix = '') {
         this.logicNode = logicNode;
-        this.label = label;
+        this.label = label || 'NODE';
         this.kind = kind;
         this.x = x;
         this.y = y;
         this.gridSize = gridSize;
         this.circuit = circuit;
+        this.pathPrefix = pathPrefix || '';
 
         // Determine pin counts
         let outCount = 1;
@@ -127,7 +128,7 @@ export class GraphNode {
             bg = color(230, 215, 255);
             border = color(120, 60, 180);
         } else if (this.kind === 'GRAPH_GATE') {
-            bg = color(245, 245, 220);
+            bg = color(245, 245, 220); // Basic beige for standard gates!
         }
 
         // Apply styles for Outputs (Root Nodes)
@@ -149,27 +150,52 @@ export class GraphNode {
         textFont(font);
         textAlign(CENTER, CENTER);
 
-        // --- Dynamic Text Size Logic ---
-        let defaultLabelSize = 11;
-        textSize(defaultLabelSize);
-        let titleTw = textWidth(this.label);
-        let maxTitleWidth = this.w - 10; // 5px padding on each side
+        // Split by newline to handle the "Origin Name" logic
+        let lines = this.label.split('\n');
 
-        if (titleTw > maxTitleWidth) {
-            // Scale size down if the text is wider than the allowed box width
-            textSize(Math.max(5, defaultLabelSize * (maxTitleWidth / titleTw)));
+        // Dynamic Text Size Logic
+        let defaultLabelSize = lines.length > 1 ? 9 : 11;
+        textSize(defaultLabelSize);
+
+        let maxLineWidth = 0;
+        lines.forEach(l => {
+            let tw = textWidth(l);
+            if (tw > maxLineWidth) maxLineWidth = tw;
+        });
+
+        let maxTitleWidth = this.w - 10;
+        if (maxLineWidth > maxTitleWidth) {
+            textSize(Math.max(5, defaultLabelSize * (maxTitleWidth / maxLineWidth)));
         }
 
-        text(this.label, 0, -5);
+        // Draw the label (this automatically handles \n in p5.js)
+        if (this.pathPrefix && this.pathPrefix.length > 0) {
+            text(this.label, 0, 5); // Shift down for breadcrumb
+
+            fill(130);
+            textSize(7);
+            let displayPath = this.pathPrefix;
+            if (textWidth(displayPath) > maxTitleWidth) {
+                while (textWidth('...' + displayPath) > maxTitleWidth && displayPath.length > 0) {
+                    displayPath = displayPath.substring(1);
+                }
+                displayPath = '...' + displayPath;
+            }
+            text(displayPath, 0, -12);
+        } else {
+            text(this.label, 0, 0); // Center-aligned
+        }
 
         // 1. Draw Output Pins & Value Badges
-        for (let i = 0; i < this.outputPins.length; i++) {
-            const pin = this.outputPins[i];
-            const py = pin.worldY - this.y;
-           
-            // Output Pin Dot
-            fill(60);
-            ellipse(this.w / 2, py, 8, 8);
+        if (!isRoot) {
+            for (let i = 0; i < this.outputPins.length; i++) {
+                const pin = this.outputPins[i];
+                const py = pin.worldY - this.y;
+
+                // Output Pin Dot
+                fill(60);
+                ellipse(this.w / 2, py, 8, 8);
+            }
         }
 
         // 2. Draw Input Pins

@@ -75,20 +75,34 @@ export function layoutNodes(layers, gridSize) {
 
 export function nodeLabel(node) {
     // 1. Always prioritize the explicit human-readable name if it exists!
-    console.log(node);
-    if (node.name) return node.name;
+    if (node.name) {
+        // NEW: If it's a SubCircuitOutputNode, show origin
+        if (node instanceof SubCircuitOutputNode && node.compositeNode) {
+            const originName = node.compositeNode.name || node.compositeNode.subCircuit.name;
+            return `${originName}\n(${node.name})`;
+        }
 
-    // 2. Generic fallbacks just in case
+        // NEW: If it's a GateNode, show Gate Type + Instance Name
+        if (node instanceof GateNode) {
+            return `${node.gateType} Gate\n(${node.name})`;
+        }
+
+        return node.name;
+    }
+
+    // 2. Generic fallbacks for basic types
     if (node instanceof InputNode) return `INPUT ${node.index}`;
     if (node instanceof ClockNode) return 'CLK';
     if (node instanceof FeedbackNode) return 'MEM';
     if (node instanceof GateNode) return node.gateType ?? 'GATE';
 
+    // 3. Fallback for Output Nodes if name is missing
     if (node instanceof SubCircuitOutputNode) {
-        return `${node.compositeNode.name}[${node.outputIndex}]`;
+        const parentName = node.compositeNode?.name || "COMP";
+        return `${parentName}\nOUT[${node.outputIndex}]`;
     }
 
-    if (node instanceof CompositeNode) return node.name ?? node.subCircuit.name ?? 'COMP';
+    if (node instanceof CompositeNode) return node.name || node.subCircuit.name || 'COMP';
 
     return 'NODE';
 }
