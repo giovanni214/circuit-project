@@ -21,19 +21,50 @@ export class InspectorScene {
         const rootSet = new Set(rootNodes);
         const feedbackSet = new Set(this.circuit.feedbackNodes ?? []);
 
+        // Build CompositeNode → { outputIndex → name } from SubCircuitOutputNodes
+        const compositeOutputNames = new Map();
+        for (const logicNode of allNodes) {
+            if (logicNode instanceof SubCircuitOutputNode && logicNode.name) {
+                if (!compositeOutputNames.has(logicNode.compositeNode)) {
+                    compositeOutputNames.set(logicNode.compositeNode, new Map());
+                }
+                compositeOutputNames
+                    .get(logicNode.compositeNode)
+                    .set(logicNode.outputIndex, logicNode.name);
+            }
+        }
+
         for (const [logicNode, pos] of positions) {
             if (logicNode instanceof SubCircuitOutputNode && !rootSet.has(logicNode)) {
                 continue;
             }
 
+            // Derive input pin labels from the connected nodes' names
+            const inputArr = logicNode.inputNodes ?? logicNode.inputs ?? [];
+            const inputPinLabels = inputArr.map(n => n?.name || '');
+
+            // Derive output pin labels from SubCircuitOutputNode names
+            const outNameMap = compositeOutputNames.get(logicNode) ?? new Map();
+            const outCount =
+                logicNode.subCircuit &&
+                    typeof logicNode.subCircuit.outputLength === 'number'
+                    ? logicNode.subCircuit.outputLength
+                    : 1;
+            const outputPinLabels = Array.from(
+                { length: outCount },
+                (_, i) => outNameMap.get(i) || ''
+            );
+
             const gn = new GraphNode(
                 logicNode,
-                nodeLabel(logicNode), // Keep the base label clean (e.g., "A")
+                nodeLabel(logicNode),
                 nodeKind(logicNode),
                 pos.x, pos.y,
                 this.gridSize,
                 this.circuit,
-                this.pathPrefix // Pass the breadcrumb path as a separate property
+                this.pathPrefix,
+                inputPinLabels,
+                outputPinLabels
             );
             this.nodes.push(gn);
             this.logicToGraph.set(logicNode, gn);
@@ -79,7 +110,7 @@ export class InspectorScene {
     _getEdgeValue(edge) {
         const rawVal = edge.from.getValue();
         const valArray = Array.isArray(rawVal) ? rawVal : [rawVal];
-        
+
         // Directly grab the value for this specific edge's output pin
         const pinVal = valArray[edge.outputIndex] ?? 0;
         return pinVal === 1 ? 1 : 0;
@@ -127,7 +158,7 @@ export class InspectorScene {
 
         const parsedVal = this._getEdgeValue(edge);
         const col = parsedVal === 1 ? '#4CAF50' : '#888888';
-        
+
         const loopY = Math.max(fromPin.worldY, toPin.worldY) + this.gridSize * 6;
         const stubOut = fromPin.worldX + this.gridSize * 3;
         const stubIn = toPin.worldX - this.gridSize * 3;
@@ -193,7 +224,7 @@ export class InspectorScene {
 
                 const crossings = new Set();
                 for (const v of allVerts) {
-                    if (v.dataIndex === i) continue; 
+                    if (v.dataIndex === i) continue;
                     const dj = allData[v.dataIndex];
                     const sameFrom = di.fromPin.worldX === dj.fromPin.worldX && di.fromPin.worldY === dj.fromPin.worldY;
                     const sameTo = di.toPin.worldX === dj.toPin.worldX && di.toPin.worldY === dj.toPin.worldY;
@@ -215,10 +246,10 @@ export class InspectorScene {
             stroke(d.col);
             strokeWeight(2.5);
             noFill();
-            
+
             if (d.isDashed) drawingContext.setLineDash([8, 6]);
             else drawingContext.setLineDash([]);
-            
+
             for (const vs of d.vSegs) {
                 line(vs.x1, vs.y1, vs.x2, vs.y2);
             }
@@ -229,10 +260,10 @@ export class InspectorScene {
             stroke(d.col);
             strokeWeight(2.5);
             noFill();
-            
+
             if (d.isDashed) drawingContext.setLineDash([8, 6]);
             else drawingContext.setLineDash([]);
-            
+
             for (const hs of d.hSegs) {
                 if (hs.x1 !== hs.x2 || hs.y1 !== hs.y2)
                     line(hs.x1, hs.y1, hs.x2, hs.y2);
@@ -310,7 +341,7 @@ export class InspectorScene {
                 hx + R, y
             );
         }
-        
+
         drawingContext.setLineDash([]);
     }
 }

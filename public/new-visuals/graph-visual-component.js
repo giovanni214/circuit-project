@@ -1,5 +1,5 @@
 export class GraphNode {
-    constructor(logicNode, label, kind, x, y, gridSize, circuit = null, pathPrefix = '') {
+    constructor(logicNode, label, kind, x, y, gridSize, circuit = null, pathPrefix = '', inputPinLabels = [], outputPinLabels = []) {
         this.logicNode = logicNode;
         this.label = label || 'NODE';
         this.kind = kind;
@@ -8,6 +8,8 @@ export class GraphNode {
         this.gridSize = gridSize;
         this.circuit = circuit;
         this.pathPrefix = pathPrefix || '';
+        this.inputPinLabels = inputPinLabels;
+        this.outputPinLabels = outputPinLabels;
 
         // Determine pin counts
         let outCount = 1;
@@ -100,51 +102,48 @@ export class GraphNode {
         translate(this.x, this.y);
 
         const rawVal = this.getValue();
-        // Force value into an array so we can map it to multiple output pins
         const valArray = Array.isArray(rawVal) ? rawVal : [rawVal];
 
+        // Determine state
+        const blockVal = valArray[0] ?? 0;
+        const isActive = blockVal === 1;
+
+        // Define Colors
         let bg = color(255);
-        let border = color(0);
+        let border = color(180); // Default grey border
         let textCol = color(20);
         let sWeight = isFeedback ? 2.5 : 1.5;
 
-        // Standardize the block's main color based on its first output
-        const blockVal = valArray[0] ?? 0;
-        const parsedBlockVal = blockVal === 1 ? 1 : 0;
-
-        // Define the color based on the current state (Green for 1, Red for 0)
-        const stateColor = parsedBlockVal === 1 ? color(76, 175, 80) : color(244, 67, 54);
+        const stateColor = isActive ? color(76, 175, 80) : color(244, 67, 54);
 
         const subLabels = [];
 
-        // Apply styles for Inputs
+        // Styling logic
         if (this.kind === 'GRAPH_INPUT') {
             border = stateColor;
             sWeight = 3;
             subLabels.push({ text: '[input]', col: stateColor });
-        } else if (this.kind === 'GRAPH_CLOCK') {
-            bg = color(200, 220, 255);
-        } else if (this.kind === 'GRAPH_FEEDBACK') {
-            bg = color(230, 215, 255);
-            border = color(120, 60, 180);
         } else if (this.kind === 'GRAPH_GATE') {
-            bg = color(245, 245, 220); // Basic beige for standard gates!
+            // If you want gates to show color when active:
+            border = isActive ? stateColor : color(100);
+        } else if (this.kind === 'GRAPH_CLOCK') {
+            bg = isActive ? color(150, 200, 255) : color(200, 220, 255);
         }
 
-        // Apply styles for Outputs (Root Nodes)
         if (isRoot) {
             border = stateColor;
             sWeight = 3;
             subLabels.push({ text: '[output]', col: stateColor });
         }
 
+        // DRAW BOX
         stroke(border);
         strokeWeight(sWeight);
-
         fill(bg);
         rectMode(CENTER);
         rect(0, 0, this.w, this.h, 5);
 
+        // DRAW TEXT
         fill(textCol);
         noStroke();
         textFont(font);
@@ -186,22 +185,41 @@ export class GraphNode {
             text(this.label, 0, 0); // Center-aligned
         }
 
-        // 1. Draw Output Pins & Value Badges
+        // 1. Draw Output Pins & Labels
         if (!isRoot) {
             for (let i = 0; i < this.outputPins.length; i++) {
                 const pin = this.outputPins[i];
                 const py = pin.worldY - this.y;
 
-                // Output Pin Dot
                 fill(60);
                 ellipse(this.w / 2, py, 8, 8);
+
+                const lbl = this.outputPinLabels[i];
+                if (lbl) {
+                    fill(50);
+                    noStroke();
+                    textSize(7);
+                    textAlign(RIGHT, CENTER);
+                    text(lbl, this.w / 2 - 6, py);
+                }
             }
         }
 
-        // 2. Draw Input Pins
-        for (const pin of this.inputPins) {
+        // 2. Draw Input Pins + Labels
+        for (let i = 0; i < this.inputPins.length; i++) {
+            const pin = this.inputPins[i];
+            const py = pin.worldY - this.y;
             fill(60);
-            ellipse(-this.w / 2, pin.worldY - this.y, 8, 8);
+            ellipse(-this.w / 2, py, 8, 8);
+
+            const lbl = this.inputPinLabels[i];
+            if (lbl) {
+                fill(50);
+                noStroke();
+                textSize(7);
+                textAlign(LEFT, CENTER);
+                text(lbl, -this.w / 2 + 6, py);
+            }
         }
 
         // Handle Feedback labels
