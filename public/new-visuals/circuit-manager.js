@@ -80,16 +80,88 @@ export class CircuitManager {
 
     // ── Save Circuit ────────────────────────────────────────────
 
+    // Add these serialization helpers anywhere inside the CircuitManager class
+    serialize() {
+        const compsData = this.components.map((c, i) => {
+            c._saveId = i;
+            return {
+                id: i,
+                type: c.type,
+                x: c.x,
+                y: c.y,
+                gridSize: c.gridSize,
+                gate: c.gate, // Retain reference to the logic gate
+                value: c.value
+            };
+        });
+
+        const wiresData = this.wires.map(w => {
+            const startComp = w.startNode.parent;
+            const endComp = w.endNode.parent;
+
+            const startIsOut = startComp.outputNodes.includes(w.startNode);
+            const startNodeIndex = startIsOut
+                ? startComp.outputNodes.indexOf(w.startNode)
+                : startComp.inputNodes.indexOf(w.startNode);
+
+            const endIsOut = endComp.outputNodes.includes(w.endNode);
+            const endNodeIndex = endIsOut
+                ? endComp.outputNodes.indexOf(w.endNode)
+                : endComp.inputNodes.indexOf(w.endNode);
+
+            return {
+                startCompId: startComp._saveId,
+                startNodeType: w.startNode.type,
+                startNodeIndex,
+                endCompId: endComp._saveId,
+                endNodeType: w.endNode.type,
+                endNodeIndex,
+                waypoints: w.waypoints.map(wp => ({ x: wp.x, y: wp.y })),
+                invertU: w.invertU
+            };
+        });
+
+        return { components: compsData, wires: wiresData };
+    }
+
+    deserialize(data) {
+        const newComps = data.components.map(cd => {
+            const c = new VisualComponent(cd.type, cd.x, cd.y, cd.gridSize, cd.gate);
+            c.value = cd.value;
+            c._saveId = cd.id;
+            // Restore initial output node states for inputs
+            if (c.type === 'INPUT') c.outputNodes.forEach(n => n.value = c.value);
+            return c;
+        });
+
+        const newWires = data.wires.map(wd => {
+            const startComp = newComps.find(c => c._saveId === wd.startCompId);
+            const endComp = newComps.find(c => c._saveId === wd.endCompId);
+
+            const startNode = wd.startNodeType === 'OUTPUT'
+                ? startComp.outputNodes[wd.startNodeIndex]
+                : startComp.inputNodes[wd.startNodeIndex];
+
+            const endNode = wd.endNodeType === 'INPUT'
+                ? endComp.inputNodes[wd.endNodeIndex]
+                : endComp.outputNodes[wd.endNodeIndex];
+
+            const w = new Wire(startNode, endNode, wd.waypoints);
+            w.invertU = wd.invertU || 0;
+            return w;
+        });
+
+        return { components: newComps, wires: newWires };
+    }
+
+    // Update your promptSave and promptLoad methods to use the serializers:
     promptSave() {
         const name = prompt('Name this circuit:', 'MyCircuit');
         if (!name?.trim()) return;
         const trimmed = name.trim();
 
-        // Capture a snapshot factory
-        const snapshot = {
-            components: this.components,
-            wires: this.wires
-        };
+        // Serialize a deep clone instead of a shallow reference
+        const snapshot = this.serialize();
 
         CircuitRegistry.save(trimmed, snapshot);
         alert(`Circuit "${trimmed}" saved! You can now load it from the registry.`);
@@ -107,7 +179,6 @@ export class CircuitManager {
         const input = prompt(`Saved circuits:\n\n${list}\n\nEnter name or number to load:`);
         if (!input?.trim()) return;
 
-        // Allow loading by index or by name
         let name = input.trim();
         const asIndex = parseInt(name, 10);
         if (!isNaN(asIndex) && asIndex >= 1 && asIndex <= names.length) {
@@ -120,49 +191,66 @@ export class CircuitManager {
             return;
         }
 
-        this.components = snapshot.components;
-        this.wires = snapshot.wires;
+        // Deserialize to recreate the layout properly
+        const restored = this.deserialize(snapshot);
+        this.components = restored.components;
+        this.wires = restored.wires;
         this.activeElement = null;
         this.state = 'IDLE';
+
+        // Ensure all logic paths match their new states without running a full simulation tick
+        for (let wire of this.wires) wire.propagate();
+        for (let comp of this.components) comp.updateLogic();
+
         console.log(`[Registry] Loaded "${name}"`);
     }
 
+    // Update finishWire to push the signal into the connected component instantly
+    finishWire(endNode) {
+        let outNode = this.startNode.type === 'OUTPUT' ? this.startNode : endNode;
+        let inNode = this.startNode.type === 'INPUT' ? this.startNode : endNode;
+        let finalWaypoints =
+            this.startNode.type === 'INPUT'
+                ? [...this.waypoints].reverse()
+                : [...this.waypoints];
+
+        let newWire = new Wire(outNode, inNode, finalWaypoints);
+        if (finalWaypoints.length === 0) {
+            const dx = Math.abs(outNode.worldX - inNode.worldX);
+            const dy = Math.abs(outNode.worldY - inNode.worldY);
+
+            if (dx > 2 && dy > 2) {
+                // Only auto-route true diagonal connections
+                newWire.waypoints = Wire.generateAutoWaypoints(
+                    outNode.worldX, outNode.worldY,
+                    inNode.worldX, inNode.worldY,
+                    this.gridSize,
+                    newWire.invertU
+                );
+            }
+            // dx ≈ 0 → vertical straight line, dy ≈ 0 → horizontal straight line
+            // both cases: getSegments() draws clean with no waypoints
+        }
+
+        this.wires.push(newWire);
+        this.state = 'IDLE';
+        this.startNode = null;
+        this.waypoints = [];
+
+        // Propagate only the newly connected wire's signal into its direct target
+        newWire.propagate();
+        if (inNode.parent) {
+            inNode.parent.updateLogic();
+        }
+    }
+
+
+
     // ── Main Draw ───────────────────────────────────────────────
 
-    draw(font) {
-        if (this.isInspecting()) {
-            this._drawInspector(font);
-            return;
-        }
+    // ── Main Draw ───────────────────────────────────────────────
 
-        push();
-        this.viewport.apply();
-        this.viewport.drawGrid(this.gridSize);
 
-        for (let wire of this.wires) {
-            wire.draw(this.activeElement === wire);
-        }
-
-        if (this.state === 'DRAWING_WIRE' && this.startNode) {
-            Wire.drawPreview(
-                this.startNode,
-                this.viewport.getWorldCoords(mouseX, mouseY),
-                this.gridSize,
-                this.waypoints
-            );
-        }
-
-        for (let comp of this.components) {
-            comp.draw(font, this.activeElement === comp);
-        }
-        pop();
-
-        if (this.inspectedComponent) {
-            this.drawStatePopup(font);
-        }
-
-        this._drawHUD(font);
-    }
 
     _drawInspector(font) {
         background(245);
@@ -233,16 +321,115 @@ export class CircuitManager {
         );
     }
 
-    // ── Interaction ─────────────────────────────────────────────
+    // handleMouseDrag — PREPARE_BRANCH block only
+    handleMouseDrag(mx, my) {
+        if (this.isInspecting()) {
+            this.viewport.updatePan(mx, my);
+            return;
+        }
+
+        if (this.state === 'PREPARE_BRANCH' && this.activeElement instanceof Wire) {
+            if (dist(mx, my, this.branchScreenX, this.branchScreenY) > 5) {
+                const wire = this.activeElement;
+
+                this.state = 'DRAWING_WIRE';
+                this.startNode = wire.startNode;
+                // Junction point becomes the first (and only) waypoint to start from
+                this.waypoints = [{ x: this.branchStartX, y: this.branchStartY }];
+                this.branchParentWire = wire; // remember for preview hint only
+                this.activeElement = null;
+            }
+        }
+
+        if (this.state === 'PANNING') {
+            this.viewport.updatePan(mx, my);
+        } else if (this.state === 'DRAGGING_COMP' && this.activeElement) {
+            const worldPt = this.viewport.getWorldCoords(mx, my);
+            this.activeElement.x = this.snap(worldPt.x - this.activeElement.dragOffset.x);
+            this.activeElement.y = this.snap(worldPt.y - this.activeElement.dragOffset.y);
+            this.activeElement.updateNodes();
+        } else if (this.state === 'DRAGGING_WAYPOINT' && this.activeElement instanceof Wire) {
+            const worldPt = this.viewport.getWorldCoords(mx, my);
+            const wp = this.activeElement.waypoints[this.activeWaypointIndex];
+            if (wp) {
+                wp.x = this.snap(worldPt.x);
+                wp.y = this.snap(worldPt.y);
+            }
+        }
+    }
+
+    // cancelWireDraw — no parent healing needed anymore
+    cancelWireDraw() {
+        this.state = 'IDLE';
+        this.startNode = null;
+        this.waypoints = [];
+        this.branchParentWire = null;
+        this.branchInsertIndex = -1;
+        this.activeElement = null;
+    }
+
+    draw(font) {
+        if (this.isInspecting()) {
+            this._drawInspector(font);
+            return;
+        }
+
+        push();
+        this.viewport.apply();
+        this.viewport.drawGrid(this.gridSize);
+
+        for (let comp of this.components) {
+            comp.draw(font, this.activeElement === comp);
+        }
+
+        for (let wire of this.wires) {
+            wire.draw(this.activeElement === wire);
+        }
+
+        if (this.state === 'DRAWING_WIRE' && this.startNode) {
+            const worldMouse = this.viewport.getWorldCoords(mouseX, mouseY);
+
+            Wire.drawPreview(
+                this.startNode,
+                worldMouse,
+                this.gridSize,
+                this.waypoints,
+                !!this.branchParentWire  // simple boolean: are we branching?
+            );
+
+            const targetNode = this.getHoveredNode(worldMouse.x, worldMouse.y);
+            if (targetNode && targetNode !== this.startNode && targetNode.type !== this.startNode.type) {
+                push();
+                stroke(0, 150, 255, 200);
+                strokeWeight(3);
+                noFill();
+                ellipse(targetNode.worldX, targetNode.worldY, 24);
+                pop();
+            }
+        }
+
+        pop();
+
+        if (this.inspectedComponent) {
+            this.drawStatePopup(font);
+        }
+
+        this._drawHUD(font);
+    }
 
     handleMousePress(mx, my) {
+        if (mouseButton === RIGHT) {
+            if (this.state === 'DRAWING_WIRE') {
+                this.cancelWireDraw();
+            }
+            return;
+        }
+
         if (this.isInspecting()) {
-            // Back button hit
             if (mx >= width - 110 && mx <= width - 14 && my >= 8 && my <= 32) {
                 this.drillOut();
                 return;
             }
-            // Still allow panning
             this.state = 'INSPECTING';
             this.viewport.startPan(mx, my);
             return;
@@ -254,6 +441,8 @@ export class CircuitManager {
             let node = this.getHoveredNode(worldPt.x, worldPt.y);
             if (node && node !== this.startNode && node.type !== this.startNode.type) {
                 this.finishWire(node);
+                this.branchParentWire = null;
+                this.branchInsertIndex = -1;
             } else if (!node) {
                 this.waypoints.push({
                     x: this.snap(worldPt.x),
@@ -263,12 +452,14 @@ export class CircuitManager {
             return;
         }
 
-        let node = this.getHoveredNode(worldPt.x, worldPt.y);
+        let node = this.getHoveredNode(worldPt.x, worldPt.y, 10 / this.viewport.zoom);
         if (node) {
             this.state = 'DRAWING_WIRE';
             this.startNode = node;
             this.waypoints = [];
             this.activeElement = null;
+            this.branchParentWire = null;
+            this.branchInsertIndex = -1;
             return;
         }
 
@@ -307,12 +498,14 @@ export class CircuitManager {
             if (wire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
                 this.activeElement = wire;
                 if (keyIsDown(SHIFT)) {
-                    this.activeWaypointIndex = wire.insertWaypointAt(
-                        worldPt.x, worldPt.y, this.gridSize
-                    );
+                    this.activeWaypointIndex = wire.insertWaypointAt(worldPt.x, worldPt.y, this.gridSize);
                     this.state = 'DRAGGING_WAYPOINT';
                 } else {
-                    this.state = 'IDLE';
+                    this.state = 'PREPARE_BRANCH';
+                    this.branchStartX = this.snap(worldPt.x);
+                    this.branchStartY = this.snap(worldPt.y);
+                    this.branchScreenX = mx;
+                    this.branchScreenY = my;
                 }
                 return;
             }
@@ -323,62 +516,20 @@ export class CircuitManager {
         this.viewport.startPan(mx, my);
     }
 
-    handleMouseDrag(mx, my) {
-        if (this.isInspecting()) {
-            this.viewport.updatePan(mx, my);
-            return;
-        }
-
-        if (this.state === 'PANNING') {
-            this.viewport.updatePan(mx, my);
-        } else if (this.state === 'DRAGGING_COMP' && this.activeElement) {
-            let worldPt = this.viewport.getWorldCoords(mx, my);
-            this.activeElement.x = this.snap(worldPt.x - this.activeElement.dragOffset.x);
-            this.activeElement.y = this.snap(worldPt.y - this.activeElement.dragOffset.y);
-            this.activeElement.updateNodes();
-
-            for (let wire of this.wires) {
-                if (
-                    wire.startNode.parent === this.activeElement ||
-                    wire.endNode.parent === this.activeElement
-                ) {
-                    wire.waypoints = Wire.generateAutoWaypoints(
-                        wire.startNode.worldX, wire.startNode.worldY,
-                        wire.endNode.worldX, wire.endNode.worldY,
-                        this.gridSize,
-                        wire.invertU
-                    );
-                }
-            }
-        } else if (
-            this.state === 'DRAGGING_WAYPOINT' &&
-            this.activeElement instanceof Wire
-        ) {
-            let worldPt = this.viewport.getWorldCoords(mx, my);
-            this.activeElement.waypoints[this.activeWaypointIndex] = {
-                x: this.snap(worldPt.x),
-                y: this.snap(worldPt.y)
-            };
-        }
-    }
 
     handleMouseRelease() {
-        if (this.isInspecting()) {
-            // just stop panning
-            return;
-        }
+        if (this.isInspecting()) return;
 
         let worldPt = this.viewport.getWorldCoords(mouseX, mouseY);
 
         if (this.state === 'DRAWING_WIRE' && this.startNode) {
             let endNode = this.getHoveredNode(worldPt.x, worldPt.y);
-            let d = dist(
-                this.startNode.worldX, this.startNode.worldY,
-                worldPt.x, worldPt.y
-            );
+            let d = dist(this.startNode.worldX, this.startNode.worldY, worldPt.x, worldPt.y);
 
             if (endNode && endNode !== this.startNode && endNode.type !== this.startNode.type && d > 10) {
                 this.finishWire(endNode);
+                this.branchParentWire = null;
+                this.branchInsertIndex = -1;
                 return;
             }
 
@@ -387,29 +538,43 @@ export class CircuitManager {
                     if (targetWire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
                         let snappedX = this.snap(worldPt.x);
                         let snappedY = this.snap(worldPt.y);
+
                         let outNode = targetWire.startNode;
                         let inNode = this.startNode;
-                        let finalWaypoints = [...this.waypoints].reverse();
-                        finalWaypoints.unshift({ x: snappedX, y: snappedY });
-                        this.wires.push(new Wire(outNode, inNode, finalWaypoints));
-                        targetWire.insertWaypointAt(snappedX, snappedY, this.gridSize);
+
+                        let insertIndex = targetWire.insertWaypointAt(snappedX, snappedY, this.gridSize);
+                        let parentPath = targetWire.waypoints.slice(0, insertIndex + 1);
+                        let drawnPath = [...this.waypoints].reverse();
+                        let finalWaypoints = [...parentPath, ...drawnPath];
+
+                        let newWire = new Wire(outNode, inNode, finalWaypoints);
+                        this.wires.push(newWire);
+
                         this.state = 'IDLE';
                         this.startNode = null;
                         this.waypoints = [];
+                        this.branchParentWire = null;
+                        this.branchInsertIndex = -1;
+
+                        newWire.propagate();
+                        if (inNode.parent) {
+                            inNode.parent.updateLogic();
+                        }
                         return;
                     }
                 }
             }
+
+
             return;
         }
 
-        if (
-            this.state === 'DRAGGING_WAYPOINT' ||
-            this.state === 'DRAGGING_COMP' ||
-            this.state === 'PANNING'
-        ) {
+        if (this.state === 'DRAGGING_WAYPOINT' || this.state === 'DRAGGING_COMP' || this.state === 'PANNING' || this.state === 'PREPARE_BRANCH') {
             this.state = 'IDLE';
             this.activeWaypointIndex = -1;
+            this.activeElement = null;
+            this.branchParentWire = null;
+            this.branchInsertIndex = -1;
         }
     }
 
@@ -421,29 +586,64 @@ export class CircuitManager {
             return;
         }
 
+        // NEW: Safely abort drag on double click
+        if (this.state === 'PREPARE_BRANCH' || this.state === 'DRAWING_WIRE') {
+            if (this.state === 'DRAWING_WIRE') this.cancelWireDraw();
+            else {
+                this.state = 'IDLE';
+                this.activeElement = null;
+            }
+        }
+
         let worldPt = this.viewport.getWorldCoords(mx, my);
 
+        // ... rest of the method logic remains exactly the same
+        let hitWaypoints = [];
         for (let wire of this.wires) {
             let wpIdx = wire.getHitWaypointIndex(worldPt.x, worldPt.y, this.viewport.zoom);
-            if (wpIdx !== -1) {
-                wire.waypoints.splice(wpIdx, 1);
-                return;
-            } else if (wire.isHit(worldPt.x, worldPt.y, this.viewport.zoom)) {
-                wire.invertU = (wire.invertU + 1) % 4;
-                wire.waypoints = Wire.generateAutoWaypoints(
-                    wire.startNode.worldX, wire.startNode.worldY,
-                    wire.endNode.worldX, wire.endNode.worldY,
-                    this.gridSize,
-                    wire.invertU
-                );
-                return;
+            if (wpIdx !== -1) hitWaypoints.push({ wire, wpIdx });
+        }
+
+        if (hitWaypoints.length > 0) {
+            for (let item of hitWaypoints) {
+                let wire = item.wire;
+                wire.waypoints.splice(item.wpIdx, 1);
+
+                if (wire.segmentFlips) {
+                    let newFlips = {};
+                    for (let key in wire.segmentFlips) {
+                        let k = parseInt(key);
+                        if (k > item.wpIdx) newFlips[k - 1] = wire.segmentFlips[k];
+                        else if (k < item.wpIdx) newFlips[k] = wire.segmentFlips[k];
+                    }
+                    wire.segmentFlips = newFlips;
+                }
             }
+            return;
+        }
+
+        let hitSegments = [];
+        for (let wire of this.wires) {
+            let segIdx = wire.getHitSegmentIndex(worldPt.x, worldPt.y, this.viewport.zoom);
+            if (segIdx !== -1) hitSegments.push({ wire, segIdx });
+        }
+
+        if (hitSegments.length > 0) {
+            let firstWire = hitSegments[0].wire;
+            let firstIdx = hitSegments[0].segIdx;
+            let newState = firstWire.segmentFlips ? !firstWire.segmentFlips[firstIdx] : true;
+
+            for (let item of hitSegments) {
+                let wire = item.wire;
+                if (!wire.segmentFlips) wire.segmentFlips = {};
+                wire.segmentFlips[item.segIdx] = newState;
+            }
+            return;
         }
 
         for (let comp of this.components) {
             if (comp.isHit(worldPt.x, worldPt.y)) {
                 if (comp.type === 'CIRCUIT' && comp.gate?.rootNodes) {
-                    // DRILL IN
                     this.drillInto(comp);
                 } else {
                     comp.toggleState();
@@ -457,6 +657,24 @@ export class CircuitManager {
         if (this.isInspecting()) {
             if (key === 'Escape') this.drillOut();
             return;
+        }
+
+        if (this.state === 'DRAWING_WIRE') {
+            // Escape key cancels the wire
+            if (keyCode === 27 || key === 'Escape') {
+                this.cancelWireDraw();
+                return;
+            }
+
+            // Spacebar drops a joint at your current mouse position
+            if (keyCode === 32 || key === ' ') {
+                let worldPt = this.viewport.getWorldCoords(mouseX, mouseY);
+                this.waypoints.push({
+                    x: this.snap(worldPt.x),
+                    y: this.snap(worldPt.y)
+                });
+                return;
+            }
         }
 
         if (key === ' ') {
@@ -520,38 +738,16 @@ export class CircuitManager {
         return Math.round(val / this.gridSize) * this.gridSize;
     }
 
-    getHoveredNode(wx, wy) {
+    // Locate this helper near the bottom of circuit-manager.js and replace it
+    getHoveredNode(wx, wy, radiusOverride = null) {
         for (let comp of this.components) {
-            let node = comp.getNodeAt(wx, wy, this.viewport.zoom);
+            let node = comp.getNodeAt(wx, wy, this.viewport.zoom, radiusOverride);
             if (node) return node;
         }
         return null;
     }
 
-    finishWire(endNode) {
-        let outNode = this.startNode.type === 'OUTPUT' ? this.startNode : endNode;
-        let inNode = this.startNode.type === 'INPUT' ? this.startNode : endNode;
-        let finalWaypoints =
-            this.startNode.type === 'INPUT'
-                ? [...this.waypoints].reverse()
-                : [...this.waypoints];
 
-        let newWire = new Wire(outNode, inNode, finalWaypoints);
-
-        if (finalWaypoints.length === 0) {
-            newWire.waypoints = Wire.generateAutoWaypoints(
-                outNode.worldX, outNode.worldY,
-                inNode.worldX, inNode.worldY,
-                this.gridSize,
-                newWire.invertU
-            );
-        }
-
-        this.wires.push(newWire);
-        this.state = 'IDLE';
-        this.startNode = null;
-        this.waypoints = [];
-    }
 
     // ── State Popup (unchanged from before) ────────────────────
 

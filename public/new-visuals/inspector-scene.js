@@ -188,10 +188,7 @@ export class InspectorScene {
             }
         }
         for (const xs of hopMap.values()) xs.sort((a, b) => a - b);
-        // ── debug ─────────────────────────────────────────────────────────────────
-        const totalHops = [...hopMap.values()].reduce((s, v) => s + v.length, 0);
-        console.log('hops detected:', totalHops, [...hopMap.entries()]);
-
+        
         // ── draw forward edges ────────────────────────────────────────────────
         for (let i = 0; i < fwdData.length; i++) {
             const { edge, fromPin, toPin, midX, segs } = fwdData[i];

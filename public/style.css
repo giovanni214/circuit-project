@@ -38,9 +38,12 @@ h1 {
 	flex-shrink: 0;
 }
 
+/* Update this block in style.css */
 #canvas-container {
     flex: 1;
     overflow: hidden;
+    min-height: 0; /* This prevents the flex child from expanding beyond its parent */
+    position: relative;
 }
 
 #canvas-container canvas {

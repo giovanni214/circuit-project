@@ -5,7 +5,8 @@ export class Wire {
         this.waypoints = waypoints;
         this.horizontalFirst = true;
         this.routeStyle = 0;
-        this.invertU = 0; // ← ADD THIS (was undefined, broke generateAutoWaypoints)
+        this.invertU = 0; // NEW: Forcing horizontal/vertical preference on the first segment for better auto-routing consistency
+        this.segmentFlips = {}; // NEW object to track user-forced segment direction flips, keyed by segment index
     }
 
     propagate() {
@@ -67,9 +68,9 @@ export class Wire {
     getSegments() {
         let segments = [];
         let pts = [
-            { x: this.startNode.worldX, y: this.startNode.worldY },
+            { x: this.startNode.worldX + 6, y: this.startNode.worldY },
             ...this.waypoints,
-            { x: this.endNode.worldX, y: this.endNode.worldY }
+            { x: this.endNode.worldX - 6, y: this.endNode.worldY }
         ];
 
         for (let i = 0; i < pts.length - 1; i++) {
@@ -80,6 +81,11 @@ export class Wire {
             if (i === 0) hFirst = true;
             if (i === pts.length - 2 && pts.length > 2) hFirst = false;
 
+            // NEW: If this specific segment was flipped by the user, invert it
+            if (this.segmentFlips && this.segmentFlips[i]) {
+                hFirst = !hFirst;
+            }
+
             let midX = hFirst ? ex : sx;
             let midY = hFirst ? sy : ey;
 
@@ -87,6 +93,17 @@ export class Wire {
             if (midX !== ex || midY !== ey) segments.push({ x1: midX, y1: midY, x2: ex, y2: ey, ptIndex: i });
         }
         return segments;
+    }
+
+    getHitSegmentIndex(wx, wy, zoom) {
+        let segments = this.getSegments();
+        let hitDist = 8 / zoom;
+        for (let seg of segments) {
+            if (Wire.distToSegment(wx, wy, seg.x1, seg.y1, seg.x2, seg.y2) < hitDist) {
+                return seg.ptIndex; // Return the exact piece of the wire that was clicked
+            }
+        }
+        return -1;
     }
 
     draw(isActive) {
@@ -157,6 +174,18 @@ export class Wire {
         }
 
         this.waypoints.splice(insertIndex, 0, { x: snappedX, y: snappedY });
+
+        // NEW: Shift segment flips to the right to maintain data integrity
+        if (this.segmentFlips) {
+            let newFlips = {};
+            for (let key in this.segmentFlips) {
+                let k = parseInt(key);
+                if (k >= insertIndex) newFlips[k + 1] = this.segmentFlips[k];
+                else newFlips[k] = this.segmentFlips[k];
+            }
+            this.segmentFlips = newFlips;
+        }
+
         return insertIndex;
     }
 
@@ -180,16 +209,20 @@ export class Wire {
         return dist(px, py, x1 + t * (x2 - x1), y1 + t * (y2 - y1));
     }
 
-    // UPDATE: Radically simplified preview dragging
-    static drawPreview(startNode, worldMouse, gridSize, waypoints) {
-        let ex = Math.round(worldMouse.x / gridSize) * gridSize;
-        let ey = Math.round(worldMouse.y / gridSize) * gridSize;
+    static drawPreview(startNode, worldMouse, gridSize, waypoints, isBranch = false) {
+        const ex = Math.round(worldMouse.x / gridSize) * gridSize;
+        const ey = Math.round(worldMouse.y / gridSize) * gridSize;
 
-        let pts = [
-            { x: startNode.worldX, y: startNode.worldY },
-            ...waypoints,
-            { x: ex, y: ey }
-        ];
+        let pts;
+
+        if (isBranch && waypoints.length > 0) {
+            // Draw only from the junction point — the segment back to the
+            // output pin is already visible on the parent wire
+            pts = [...waypoints, { x: ex, y: ey }];
+        } else {
+            const startX = startNode.worldX + (startNode.type === 'OUTPUT' ? 6 : -6);
+            pts = [{ x: startX, y: startNode.worldY }, ...waypoints, { x: ex, y: ey }];
+        }
 
         push();
         stroke(150, 150, 150, 150);
@@ -197,15 +230,13 @@ export class Wire {
         noFill();
 
         for (let i = 0; i < pts.length - 1; i++) {
-            let sx = pts[i].x, sy = pts[i].y;
-            let nx = pts[i + 1].x, ny = pts[i + 1].y;
+            const sx = pts[i].x, sy = pts[i].y;
+            const nx = pts[i + 1].x, ny = pts[i + 1].y;
 
-            // Simple L-Shape right angles for the preview. No crazy loops!
-            let hFirst = Math.abs(nx - sx) >= Math.abs(ny - sy);
-            if (i === 0 && startNode.type === 'OUTPUT') hFirst = true;
-
-            let midX = hFirst ? nx : sx;
-            let midY = hFirst ? sy : ny;
+            // For the first segment of a branch, prefer the dominant axis
+            const hFirst = Math.abs(nx - sx) >= Math.abs(ny - sy);
+            const midX = hFirst ? nx : sx;
+            const midY = hFirst ? sy : ny;
 
             beginShape();
             vertex(sx, sy);
@@ -213,6 +244,60 @@ export class Wire {
             vertex(nx, ny);
             endShape();
         }
+
+        // Draw a dot at each user-placed waypoint
+        fill(150, 150, 150, 200);
+        noStroke();
+        for (let i = isBranch ? 1 : 0; i < waypoints.length; i++) {
+            ellipse(waypoints[i].x, waypoints[i].y, 8);
+        }
+
         pop();
+    } 
+
+    static drawPreview(startNode, worldMouse, gridSize, waypoints, isBranch = false) {
+    if (!worldMouse) return;  // guard against missing mouse coords on resize
+
+    const ex = Math.round(worldMouse.x / gridSize) * gridSize;
+    const ey = Math.round(worldMouse.y / gridSize) * gridSize;
+
+    let pts;
+    if (isBranch && waypoints.length > 0) {
+        pts = [...waypoints, { x: ex, y: ey }];
+    } else {
+        const startX = startNode.worldX + (startNode.type === 'OUTPUT' ? 6 : -6);
+        pts = [{ x: startX, y: startNode.worldY }, ...waypoints, { x: ex, y: ey }];
     }
+
+    if (pts.length < 2) return;  // nothing to draw yet
+
+    push();
+    stroke(150, 150, 150, 150);
+    strokeWeight(4);
+    noFill();
+
+    for (let i = 0; i < pts.length - 1; i++) {
+        const sx = pts[i].x, sy = pts[i].y;
+        const nx = pts[i + 1].x, ny = pts[i + 1].y;
+
+        const hFirst = Math.abs(nx - sx) >= Math.abs(ny - sy);
+        const midX = hFirst ? nx : sx;
+        const midY = hFirst ? sy : ny;
+
+        beginShape();
+        vertex(sx, sy);
+        vertex(midX, midY);
+        vertex(nx, ny);
+        endShape();
+    }
+
+    fill(150, 150, 150, 200);
+    noStroke();
+    const dotStart = isBranch ? 1 : 0;
+    for (let i = dotStart; i < waypoints.length; i++) {
+        ellipse(waypoints[i].x, waypoints[i].y, 8);
+    }
+
+    pop();
+}
 }
