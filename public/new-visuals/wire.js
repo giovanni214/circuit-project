@@ -6,14 +6,14 @@ export class Wire {
      * @param {Node} inNode   - INPUT node (destination)
      * @param {Array} waypoints - optional pre-built route
      */
-    constructor(outNode, inNode, waypoints = []) {
+    constructor(outNode, inNode, waypoints = null) {
         this.startNode = outNode;
         this.endNode = inNode;
         this.invertU = 0;
 
         // All corners are explicit — no implicit rendering math
         this.waypoints =
-            waypoints.length > 0
+            waypoints !== null
                 ? waypoints
                 : Wire.autoRoute(
                     outNode.worldX,
@@ -21,6 +21,9 @@ export class Wire {
                     inNode.worldX,
                     inNode.worldY
                 );
+
+        // Enforce orthogonality immediately upon creation
+        this._collapseInPlace();
     }
 
     // ── Signal propagation ──────────────────────────────────────
@@ -64,18 +67,6 @@ export class Wire {
 
     // ── Auto-routing ────────────────────────────────────────────
 
-    /**
-     * Generates a clean orthogonal route. Every corner is an
-     * explicit waypoint. Returns only the middle waypoints
-     * (not the pin positions themselves).
-     *
-     * @param {number} sx - start X (output pin world position)
-     * @param {number} sy
-     * @param {number} ex - end X (input pin world position)
-     * @param {number} ey
-     * @param {number} gridSize
-     * @param {number} style - 0..3 routing variants
-     */
     static autoRoute(sx, sy, ex, ey, gridSize = 20, style = 0) {
         const stub = gridSize;
         const ox = sx + stub; // output stub tip
@@ -154,11 +145,6 @@ export class Wire {
         return Wire._cleanCollinear(pts);
     }
 
-    /**
-     * Called by VisualComponent.updateNodes() after a component moves.
-     * Repairs only the stub segments at each end so the middle of the
-     * route is preserved as much as possible.
-     */
     updateEndpoints(gridSize = 20) {
         const sx = this.startNode.worldX;
         const sy = this.startNode.worldY;
@@ -166,39 +152,21 @@ export class Wire {
         const ey = this.endNode.worldY;
         const stub = gridSize;
 
-        // ── Repair output-side stub ─────────────────────────────
-        if (this.waypoints.length >= 1) {
-            const first = this.waypoints[0];
-            // Keep stub X fixed relative to pin; only slide Y
-            first.x = sx + stub;
-            first.y = sy;
-            // If 2nd waypoint shares Y with old first, align it too
-            if (this.waypoints.length >= 2) {
-                const second = this.waypoints[1];
-                if (second.x === first.x) {
-                    // vertical segment after stub — leave X, it moves with first
-                } else {
-                    second.y = sy; // was horizontal — keep it on same row
-                }
-            }
+        // If waypoints got lost entirely, reset the route safely
+        if (this.waypoints.length < 2) {
+            this.waypoints = Wire.autoRoute(sx, sy, ex, ey, gridSize);
+            return;
         }
 
-        // ── Repair input-side stub ──────────────────────────────
-        if (this.waypoints.length >= 1) {
-            const last = this.waypoints[this.waypoints.length - 1];
-            last.x = ex - stub;
-            last.y = ey;
-            if (this.waypoints.length >= 2) {
-                const prev =
-                    this.waypoints[this.waypoints.length - 2];
-                if (prev.x === last.x) {
-                    // vertical into stub — ok
-                } else {
-                    prev.y = ey;
-                }
-            }
-        }
+        // Move ONLY the output stub to follow the start pin
+        this.waypoints[0].x = sx + stub;
+        this.waypoints[0].y = sy;
 
+        // Move ONLY the input stub to follow the end pin
+        this.waypoints[this.waypoints.length - 1].x = ex - stub;
+        this.waypoints[this.waypoints.length - 1].y = ey;
+
+        // The orthogonalizer will automatically bridge the gap if the pin moved far away
         this._collapseInPlace(gridSize);
     }
 
@@ -206,15 +174,11 @@ export class Wire {
 
     /**
      * Drag a WAYPOINT (corner) to a new snapped position.
-     * Maintains orthogonality by adjusting the immediate
-     * neighbors along their constrained axis.
-     *
-     * @param {number} idx - index into this.waypoints
-     * @param {number} wx  - new world X (already snapped)
-     * @param {number} wy  - new world Y (already snapped)
-     * @param {number} gridSize
      */
     dragWaypoint(idx, wx, wy, gridSize) {
+        if (idx < 0 || idx >= this.waypoints.length) return -1;
+        const targetWp = this.waypoints[idx];
+
         const pts = this.getPoints(); // includes pin endpoints
         const wpOffset = 1; // waypoints start at pts[1]
         const ptsIdx = idx + wpOffset;
@@ -224,109 +188,95 @@ export class Wire {
         const next = pts[ptsIdx + 1];
 
         // Determine axis of each adjacent segment
-        const prevIsH =
-            prev && Math.abs(prev.y - curr.y) < 1; // horizontal
-        const nextIsH =
-            next && Math.abs(next.y - curr.y) < 1;
+        const prevIsH = Math.abs(prev.y - curr.y) < 1;
+        const nextIsH = Math.abs(next.y - curr.y) < 1;
 
         // Snap the drag target
         const nx = Wire._snap(wx, gridSize);
         const ny = Wire._snap(wy, gridSize);
 
         if (prevIsH && nextIsH) {
-            // Both neighbours on horizontal segments: only move Y
             curr.y = ny;
-            // Insert vertical stubs to maintain orthogonality
-            if (prev.y !== ny) prev.y = curr.y;
-            if (next.y !== ny) next.y = curr.y;
+            if (ptsIdx - 1 > 0) prev.y = curr.y;
+            if (ptsIdx + 1 < pts.length - 1) next.y = curr.y;
         } else if (!prevIsH && !nextIsH) {
-            // Both vertical: only move X
             curr.x = nx;
-            if (prev.x !== nx) prev.x = curr.x;
-            if (next.x !== nx) next.x = curr.x;
+            if (ptsIdx - 1 > 0) prev.x = curr.x;
+            if (ptsIdx + 1 < pts.length - 1) next.x = curr.x;
         } else {
-            // Mixed — free move, rebuild intermediate corner
             curr.x = nx;
             curr.y = ny;
-            // Constrain prev segment
-            if (prevIsH) {
-                prev.y = ny;
-            } else {
-                prev.x = nx;
-            }
-            // Constrain next segment
-            if (nextIsH) {
-                next.y = ny;
-            } else {
-                next.x = nx;
-            }
+            if (prevIsH) { if (ptsIdx - 1 > 0) prev.y = ny; } else { if (ptsIdx - 1 > 0) prev.x = nx; }
+            if (nextIsH) { if (ptsIdx + 1 < pts.length - 1) next.y = ny; } else { if (ptsIdx + 1 < pts.length - 1) next.x = nx; }
         }
 
-        // Write back (pins are read-only, skip them)
-        for (let i = 1; i < pts.length - 1; i++) {
-            this.waypoints[i - 1] = pts[i];
-        }
-
+        // Safely write back points and track the target reference
+        this._writeBackPts(pts);
         this._collapseInPlace(gridSize);
+
+        return this.waypoints.indexOf(targetWp);
     }
 
     /**
      * Drag a SEGMENT perpendicular to itself.
-     * This is the primary editing gesture — pull a line.
-     *
-     * @param {number} segIdx - index into getSegments()
-     * @param {number} wx
-     * @param {number} wy
-     * @param {number} gridSize
      */
     dragSegment(segIdx, wx, wy, gridSize) {
         const segs = this.getSegments();
         const seg = segs[segIdx];
-        if (!seg) return;
+        if (!seg) return -1;
 
-        const isH =
-            Math.abs(seg.y2 - seg.y1) < 1; // horizontal segment
+        const isH = Math.abs(seg.y2 - seg.y1) < 1;
 
         const nx = Wire._snap(wx, gridSize);
         const ny = Wire._snap(wy, gridSize);
 
         const pts = this.getPoints();
-        const i = seg.ptIndex; // pts[i] → pts[i+1]
+        const i = seg.ptIndex;
 
+        // Move the endpoints of the dragged segment
         if (isH) {
-            // Move both endpoints to new Y
-            pts[i].y = ny;
-            pts[i + 1].y = ny;
-            // Fix neighbours for orthogonality
-            if (i > 0) pts[i - 1].y === pts[i].y || (pts[i - 1].x = pts[i].x);
-            if (i + 2 < pts.length)
-                pts[i + 2].y === pts[i + 1].y ||
-                    (pts[i + 2].x = pts[i + 1].x);
+            if (i > 0) pts[i].y = ny;
+            if (i + 1 < pts.length - 1) pts[i + 1].y = ny;
+            // Ensure neighbors stay orthogonal
+            if (i > 0 && i - 1 > 0) pts[i - 1].x = pts[i].x;
+            if (i + 2 < pts.length - 1) pts[i + 2].x = pts[i + 1].x;
         } else {
-            // Vertical — move both endpoints to new X
-            pts[i].x = nx;
-            pts[i + 1].x = nx;
-            if (i > 0)
-                pts[i - 1].x === pts[i].x ||
-                    (pts[i - 1].y = pts[i].y);
-            if (i + 2 < pts.length)
-                pts[i + 2].x === pts[i + 1].x ||
-                    (pts[i + 2].y = pts[i + 1].y);
+            if (i > 0) pts[i].x = nx;
+            if (i + 1 < pts.length - 1) pts[i + 1].x = nx;
+            if (i > 0 && i - 1 > 0) pts[i - 1].y = pts[i].y;
+            if (i + 2 < pts.length - 1) pts[i + 2].y = pts[i + 1].y;
         }
 
-        // Write back (skip pin endpoints)
-        for (let j = 1; j < pts.length - 1; j++) {
-            this.waypoints[j - 1] = { ...pts[j] };
-        }
-
+        // Apply new geometry
+        this._writeBackPts(pts);
         this._collapseInPlace(gridSize);
-    }
 
-    /**
-     * Insert a waypoint on the segment closest to (wx, wy).
-     * Used for T-junctions and Shift+Click joint insertion.
-     * Returns the inserted waypoint index.
-     */
+        // Positional Tracker: Find the newly generated segment under the mouse
+        // so we don't drop the drag when arrays change size!
+        const newSegs = this.getSegments();
+        let bestPtIndex = -1;
+        let closestDist = Infinity;
+
+        for (const s of newSegs) {
+            const sIsH = Math.abs(s.y2 - s.y1) < 1;
+
+            // Only look at segments parallel to our drag axis
+            if (isH === sIsH) {
+                const isCollinear = isH ? Math.abs(s.y1 - ny) < 1 : Math.abs(s.x1 - nx) < 1;
+
+                if (isCollinear) {
+                    const d = Wire.distToSegment(wx, wy, s.x1, s.y1, s.x2, s.y2);
+                    if (d < closestDist) {
+                        closestDist = d;
+                        bestPtIndex = s.ptIndex;
+                    }
+                }
+            }
+        }
+
+        // Return the active segment's index, or -1 if it was absorbed into a straight line
+        return closestDist < gridSize * 2 ? bestPtIndex : -1;
+    }
     insertWaypointAt(wx, wy, gridSize) {
         const segs = this.getSegments();
         const sx = Wire._snap(wx, gridSize);
@@ -336,25 +286,18 @@ export class Wire {
         let bestSeg = segs[0];
 
         for (const seg of segs) {
-            const d = Wire.distToSegment(
-                wx, wy, seg.x1, seg.y1, seg.x2, seg.y2
-            );
+            const d = Wire.distToSegment(wx, wy, seg.x1, seg.y1, seg.x2, seg.y2);
             if (d < bestDist) {
                 bestDist = d;
                 bestSeg = seg;
             }
         }
 
-        // ptIndex is the index in getPoints(); waypoints = pts[1..n-1]
-        // So waypoint insert index = ptIndex (insert AFTER pts[ptIndex])
-        const insertAt = bestSeg.ptIndex; // inserts between pts[i] and pts[i+1]
+        const insertAt = bestSeg.ptIndex;
         this.waypoints.splice(insertAt, 0, { x: sx, y: sy });
         return insertAt;
     }
 
-    /**
-     * Remove a waypoint by index.
-     */
     removeWaypoint(idx) {
         this.waypoints.splice(idx, 1);
     }
@@ -364,10 +307,7 @@ export class Wire {
     getHitWaypointIndex(wx, wy, zoom) {
         const hitR = 12 / zoom;
         for (let i = 0; i < this.waypoints.length; i++) {
-            if (
-                dist(wx, wy, this.waypoints[i].x, this.waypoints[i].y) <
-                hitR
-            )
+            if (dist(wx, wy, this.waypoints[i].x, this.waypoints[i].y) < hitR)
                 return i;
         }
         return -1;
@@ -376,11 +316,7 @@ export class Wire {
     getHitSegmentIndex(wx, wy, zoom) {
         const hitDist = 8 / zoom;
         for (const seg of this.getSegments()) {
-            if (
-                Wire.distToSegment(
-                    wx, wy, seg.x1, seg.y1, seg.x2, seg.y2
-                ) < hitDist
-            )
+            if (Wire.distToSegment(wx, wy, seg.x1, seg.y1, seg.x2, seg.y2) < hitDist)
                 return seg.ptIndex;
         }
         return -1;
@@ -396,14 +332,12 @@ export class Wire {
         const segs = this.getSegments();
         if (segs.length === 0) return;
 
-        // ── Active glow ─────────────────────────────────────────
         if (isActive) {
             stroke(0, 150, 255, 70);
             strokeWeight(14);
             noFill();
             this._drawPolyline(segs);
 
-            // Highlight all draggable waypoints
             for (const wp of this.waypoints) {
                 fill(0, 150, 255, 200);
                 noStroke();
@@ -411,7 +345,6 @@ export class Wire {
             }
         }
 
-        // ── Wire line ───────────────────────────────────────────
         const val = this.startNode.value || 0;
         const col = val === 1 ? '#4CAF50' : '#555555';
         stroke(col);
@@ -419,14 +352,12 @@ export class Wire {
         noFill();
         this._drawPolyline(segs);
 
-        // ── Corner dots ─────────────────────────────────────────
         fill(col);
         noStroke();
         for (const wp of this.waypoints) {
             ellipse(wp.x, wp.y, 7);
         }
 
-        // ── Junction dot at start (T-junction indicator) ────────
         this._drawJunctions(segs, val);
     }
 
@@ -454,17 +385,20 @@ export class Wire {
             ];
         }
 
+        pts = Wire._orthogonalize(pts);
+
         push();
         stroke(120, 120, 200, 180);
         strokeWeight(3);
-        strokeDash && strokeDash([6, 4]); // p5 extension if available
+        if (typeof strokeDash !== 'undefined') {
+            strokeDash([6, 4]);
+        }
         noFill();
 
         beginShape();
         for (const p of pts) vertex(p.x, p.y);
         endShape();
 
-        // Waypoint dots
         fill(120, 120, 200, 220);
         noStroke();
         const start = branchInsertIndex >= 0 ? 1 : 0;
@@ -472,7 +406,6 @@ export class Wire {
             ellipse(waypoints[i].x, waypoints[i].y, 8);
         }
 
-        // Cursor snap dot
         fill(80, 80, 220, 200);
         ellipse(ex, ey, 10);
 
@@ -481,20 +414,13 @@ export class Wire {
 
     // ── Cleanup ─────────────────────────────────────────────────
 
-    /**
-     * Remove collinear/duplicate waypoints in-place.
-     */
     _collapseInPlace(gridSize) {
-        const pts = this.getPoints();
+        let pts = this.getPoints();
+        pts = Wire._orthogonalize(pts);
         const cleaned = Wire._cleanCollinear(pts);
-        // Write back only interior points
         this.waypoints = cleaned.slice(1, cleaned.length - 1);
     }
 
-    /**
-     * Remove collinear and duplicate points from a full point array
-     * (including pin endpoints). Returns cleaned array.
-     */
     static _cleanCollinear(pts) {
         if (pts.length <= 2) return pts;
         const out = [pts[0]];
@@ -502,21 +428,56 @@ export class Wire {
             const prev = out[out.length - 1];
             const curr = pts[i];
             const next = pts[i + 1];
-            // Skip if collinear on X or Y axis
-            const sameX =
-                Math.abs(prev.x - curr.x) < 0.5 &&
-                Math.abs(curr.x - next.x) < 0.5;
-            const sameY =
-                Math.abs(prev.y - curr.y) < 0.5 &&
-                Math.abs(curr.y - next.y) < 0.5;
-            // Skip if duplicate of previous
-            const dup =
-                Math.abs(prev.x - curr.x) < 0.5 &&
-                Math.abs(prev.y - curr.y) < 0.5;
-            if (!sameX && !sameY && !dup) out.push({ ...curr });
+
+            const sameX = Math.abs(prev.x - curr.x) < 0.5 && Math.abs(curr.x - next.x) < 0.5;
+            const sameY = Math.abs(prev.y - curr.y) < 0.5 && Math.abs(curr.y - next.y) < 0.5;
+            const dup = Math.abs(prev.x - curr.x) < 0.5 && Math.abs(prev.y - curr.y) < 0.5;
+
+            // DO NOT CLONE. Return original reference so indexOf keeps working!
+            if (!sameX && !sameY && !dup) out.push(curr);
         }
         out.push(pts[pts.length - 1]);
         return out;
+    }
+
+    static _orthogonalize(pts) {
+        if (pts.length < 2) return pts;
+        const out = [pts[0]];
+        for (let i = 1; i < pts.length; i++) {
+            const prev = out[out.length - 1];
+            const curr = pts[i];
+            const dx = Math.abs(prev.x - curr.x);
+            const dy = Math.abs(prev.y - curr.y);
+
+            // If the pin disconnects, insert a new joint rather than skewing diagonal
+            if (dx > 0.5 && dy > 0.5) {
+                out.push({ x: curr.x, y: prev.y });
+            }
+            out.push(curr); // DO NOT CLONE
+        }
+        return out;
+    }
+
+    _writeBackPts(pts) {
+        const newWaypoints = [];
+
+        // Protect Start Pin Gap
+        if (Math.abs(pts[0].x - pts[1].x) > 0.5 && Math.abs(pts[0].y - pts[1].y) > 0.5) {
+            newWaypoints.push({ x: pts[1].x, y: pts[0].y });
+        }
+
+        // Read Back Middle
+        for (let i = 1; i < pts.length - 1; i++) {
+            newWaypoints.push(pts[i]); // Keep original references
+        }
+
+        // Protect End Pin Gap
+        const last = pts.length - 1;
+        if (Math.abs(pts[last].x - pts[last - 1].x) > 0.5 && Math.abs(pts[last].y - pts[last - 1].y) > 0.5) {
+            newWaypoints.push({ x: pts[last - 1].x, y: pts[last].y });
+        }
+
+        this.waypoints = newWaypoints;
     }
 
     // ── Helpers ─────────────────────────────────────────────────
@@ -529,8 +490,6 @@ export class Wire {
     }
 
     _drawJunctions(segs, val) {
-        // Draw a filled circle wherever this wire's path
-        // touches the start node (makes T-junctions visible)
         const col = val === 1 ? '#4CAF50' : '#555555';
         fill(col);
         noStroke();
@@ -560,13 +519,5 @@ export class Wire {
             x1 + t * (x2 - x1),
             y1 + t * (y2 - y1)
         );
-    }
-
-    /**
-     * Kept for backward compatibility with serialized data.
-     * @deprecated Use autoRoute instead.
-     */
-    static generateAutoWaypoints(sx, sy, ex, ey, gridSize, style = 0) {
-        return Wire.autoRoute(sx, sy, ex, ey, gridSize, style);
     }
 }

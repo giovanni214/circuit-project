@@ -26,23 +26,39 @@ export class InputHandler {
             m.activeElement instanceof Wire
         ) {
             const wp = m.viewport.getWorldCoords(mx, my);
-            m.activeElement.dragWaypoint(
+            const newIdx = m.activeElement.dragWaypoint(
                 m.activeWaypointIndex,
                 wp.x,
                 wp.y,
                 m.gridSize
             );
+
+            // Track the new index, or end the drag safely if the point was absorbed into a straight line
+            if (newIdx !== undefined && newIdx !== -1) {
+                m.activeWaypointIndex = newIdx;
+            } else {
+                m.state = 'IDLE';
+                m.activeElement = null;
+            }
         } else if (
             m.state === 'DRAGGING_SEGMENT' &&
             m.activeElement instanceof Wire
         ) {
             const wp = m.viewport.getWorldCoords(mx, my);
-            m.activeElement.dragSegment(
+            const newIdx = m.activeElement.dragSegment(
                 m.activeWaypointIndex, // reused as segIndex
                 wp.x,
                 wp.y,
                 m.gridSize
             );
+
+            // Track the new index, or end the drag safely if the point was absorbed into a straight line
+            if (newIdx !== undefined && newIdx !== -1) {
+                m.activeWaypointIndex = newIdx;
+            } else {
+                m.state = 'IDLE';
+                m.activeElement = null;
+            }
         }
     }
 
