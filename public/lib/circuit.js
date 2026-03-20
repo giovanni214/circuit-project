@@ -106,6 +106,37 @@ export class Circuit {
     return this.rootNodes.length;
   }
 
+  getInputNames() {
+    const names = new Array(this.inputLength).fill(null);
+    const visited = new Set();
+
+    const traverse = (node) => {
+      if (!node || visited.has(node)) return;
+      visited.add(node);
+
+      if (node instanceof InputNode) {
+        if (!names[node.index]) names[node.index] = node.name;
+      } else if (node instanceof GateNode || node instanceof CompositeNode) {
+        node.inputNodes.forEach(traverse);
+      } else if (node instanceof FeedbackNode) {
+        if (node.inputNode) traverse(node.inputNode);
+      } else if (node instanceof SubCircuitOutputNode) {
+        traverse(node.compositeNode);
+      }
+    };
+
+    for (const node of this.rootNodes) {
+      traverse(node);
+    }
+
+    // Fallback: If any input doesn't have a name, default to IN{index}
+    for (let i = 0; i < names.length; i++) {
+      if (!names[i]) names[i] = `IN${i}`;
+    }
+
+    return names;
+  }
+
   /**
    * EVALUATE FUNCTION - COMPREHENSIVE EXPLANATION
    *

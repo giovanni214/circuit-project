@@ -16,6 +16,7 @@ export class VisualComponent {
 
     this.inputNodes = [];
     this.outputNodes = [];
+    this.inputLabels = []; // Added to cache input labels
 
     // Must be set externally via setCircuitManager()
     this._circuitManager = null;
@@ -47,6 +48,8 @@ export class VisualComponent {
       );
 
       const titleLen = this.gate.name ? this.gate.name.length : 0;
+
+      // Calculate output label lengths
       let maxOutLen = 0;
       if (this.gate.rootNodes) {
         for (let i = 0; i < this.gate.outputLength; i++) {
@@ -56,7 +59,24 @@ export class VisualComponent {
         }
       }
 
-      const requiredCharsWidth = Math.max(titleLen, 4 + maxOutLen + 4);
+      // Calculate input label lengths & cache names
+      let maxInLen = 0;
+      this.inputLabels = [];
+      if (typeof this.gate.getInputNames === "function") {
+        this.inputLabels = this.gate.getInputNames();
+        for (const lbl of this.inputLabels) {
+          if (lbl.length > maxInLen) maxInLen = lbl.length;
+        }
+      } else {
+        for (let i = 0; i < this.gate.inputLength; i++) {
+          const lbl = `IN${i}`;
+          this.inputLabels.push(lbl);
+          if (lbl.length > maxInLen) maxInLen = lbl.length;
+        }
+      }
+
+      // Dynamically calculate width based on Title, Input, and Output Name lengths
+      const requiredCharsWidth = Math.max(titleLen, maxInLen + maxOutLen + 4);
       const estimatedTextWidth = requiredCharsWidth * 8 + 40;
       const minWidth = this.gridSize * 6;
 
@@ -161,7 +181,6 @@ export class VisualComponent {
     );
   }
 
-  // FIX: accepts radiusOverride so CircuitManager.getHoveredNode works
   getNodeAt(worldX, worldY, zoom, radiusOverride = null) {
     const hitRadius =
       radiusOverride != null ? radiusOverride : 12 / zoom;
@@ -234,7 +253,8 @@ export class VisualComponent {
       textAlign(LEFT, CENTER);
       for (let i = 0; i < this.inputNodes.length; i++) {
         const n = this.inputNodes[i];
-        const lbl = `IN${i}`;
+        // Use the dynamically cached names!
+        const lbl = this.inputLabels && this.inputLabels[i] ? this.inputLabels[i] : `IN${i}`;
         fill(0);
         const defaultLblSize = 12;
         textSize(defaultLblSize);

@@ -8,7 +8,8 @@ export class SceneManager {
     }
 
     isInspecting() {
-        return this.m.state === 'INSPECTING';
+        // Return true for both the idle inspect state and the panning inspect state
+        return this.m.state === 'INSPECTING' || this.m.state === 'INSPECTING_PAN';
     }
 
     drillIntoCircuit(circuitRef, name) {
@@ -58,7 +59,10 @@ export class SceneManager {
         const m = this.m;
         if (m.sceneStack.length === 0) return;
         const prev = m.sceneStack.pop();
-        m.state = prev.state;
+
+        // Ensure we don't accidentally restore an 'INSPECTING_PAN' state if we back out mid-drag
+        m.state = prev.state === 'INSPECTING_PAN' ? 'INSPECTING' : prev.state;
+
         m.components = prev.components;
         m.wires = prev.wires;
         m.inspectorScene = prev.inspectorScene;

@@ -5,18 +5,22 @@ import { Wire } from '../wire.js';
 export class InputHandler {
     constructor(m) {
         this.m = m;
+        // Fallback to ensure selectedWires is initialized
+        if (!this.m.selectedWires) this.m.selectedWires = [];
     }
 
     handleMouseDrag(mx, my) {
         const m = this.m;
-        if (m.isInspecting()) {
+
+        // Panning works in both normal and inspecting mode
+        if (m.state === 'PANNING' || m.state === 'INSPECTING_PAN') {
             m.viewport.updatePan(mx, my);
             return;
         }
 
-        if (m.state === 'PANNING') {
-            m.viewport.updatePan(mx, my);
-        } else if (m.state === 'DRAGGING_COMP' && m.activeElement) {
+        if (m.isInspecting()) return;
+
+        if (m.state === 'DRAGGING_COMP' && m.activeElement) {
             const wp = m.viewport.getWorldCoords(mx, my);
             m.activeElement.x = m.snap(wp.x - m.activeElement.dragOffset.x);
             m.activeElement.y = m.snap(wp.y - m.activeElement.dragOffset.y);
@@ -26,172 +30,23 @@ export class InputHandler {
             m.activeElement instanceof Wire
         ) {
             const wp = m.viewport.getWorldCoords(mx, my);
-            const newIdx = m.activeElement.dragWaypoint(
+            m.activeElement.dragWaypoint(
                 m.activeWaypointIndex,
                 wp.x,
                 wp.y,
                 m.gridSize
             );
-
-            // Track the new index, or end the drag safely if the point was absorbed into a straight line
-            if (newIdx !== undefined && newIdx !== -1) {
-                m.activeWaypointIndex = newIdx;
-            } else {
-                m.state = 'IDLE';
-                m.activeElement = null;
-            }
         } else if (
             m.state === 'DRAGGING_SEGMENT' &&
             m.activeElement instanceof Wire
         ) {
             const wp = m.viewport.getWorldCoords(mx, my);
-            const newIdx = m.activeElement.dragSegment(
+            m.activeElement.dragSegment(
                 m.activeWaypointIndex, // reused as segIndex
                 wp.x,
                 wp.y,
                 m.gridSize
             );
-
-            // Track the new index, or end the drag safely if the point was absorbed into a straight line
-            if (newIdx !== undefined && newIdx !== -1) {
-                m.activeWaypointIndex = newIdx;
-            } else {
-                m.state = 'IDLE';
-                m.activeElement = null;
-            }
-        }
-    }
-
-    handleMousePress(mx, my) {
-        const m = this.m;
-        if (m.isInspecting()) {
-            if (mx >= width - 110 && mx <= width - 14 && my >= 8 && my <= 32) {
-                m.drillOut();
-                return;
-            }
-            m.state = 'INSPECTING';
-            m.viewport.startPan(mx, my);
-            return;
-        }
-
-        const worldPt = m.viewport.getWorldCoords(mx, my);
-        const hitRadius = 10 / m.viewport.zoom;
-
-        if (m.state === 'DRAWING_WIRE') {
-            this._handleWirePress(worldPt, hitRadius);
-            return;
-        }
-
-        // ── Node hit → start drawing ────────────────────────────
-        const node = m.getHoveredNode(worldPt.x, worldPt.y, hitRadius);
-        if (node) {
-            m.state = 'DRAWING_WIRE';
-            m.startNode = node;
-            m.waypoints = [];
-            m.activeElement = null;
-            m.branchParentWire = null;
-            m.branchInsertIndex = -1;
-            return;
-        }
-
-        // ── Component hit ───────────────────────────────────────
-        for (let i = m.components.length - 1; i >= 0; i--) {
-            const comp = m.components[i];
-            if (comp.isClockHit(worldPt.x, worldPt.y)) {
-                const nextClk = comp.gate.getClock() === 0 ? 1 : 0;
-                comp.gate.setClock(nextClk);
-                m.cascadeLogic();
-                return;
-            }
-            if (comp.isHit(worldPt.x, worldPt.y)) {
-                m.state = 'DRAGGING_COMP';
-                m.activeElement = comp;
-                m.components.splice(i, 1);
-                m.components.push(comp);
-                comp.dragOffset = {
-                    x: worldPt.x - comp.x,
-                    y: worldPt.y - comp.y,
-                };
-                return;
-            }
-        }
-
-        // ── Wire hit ────────────────────────────────────────────
-        for (const wire of m.wires) {
-            // Waypoint takes priority over segment
-            const wpIdx = wire.getHitWaypointIndex(
-                worldPt.x, worldPt.y, m.viewport.zoom
-            );
-            if (wpIdx !== -1) {
-                m.activeElement = wire;
-                m.activeWaypointIndex = wpIdx;
-                m.state = 'DRAGGING_WAYPOINT';
-                return;
-            }
-
-            const segIdx = wire.getHitSegmentIndex(
-                worldPt.x, worldPt.y, m.viewport.zoom
-            );
-            if (segIdx !== -1) {
-                m.activeElement = wire;
-                m.activeWaypointIndex = segIdx; // reused as segIndex
-
-                if (keyIsDown(SHIFT)) {
-                    // Shift+click → insert joint and drag it
-                    const newIdx = wire.insertWaypointAt(
-                        worldPt.x, worldPt.y, m.gridSize
-                    );
-                    m.activeWaypointIndex = newIdx;
-                    m.state = 'DRAGGING_WAYPOINT';
-                } else {
-                    m.state = 'DRAGGING_SEGMENT';
-                }
-                return;
-            }
-        }
-
-        // ── Nothing hit → pan ───────────────────────────────────
-        m.activeElement = null;
-        m.state = 'PANNING';
-        m.viewport.startPan(mx, my);
-    }
-
-    handleMouseRelease() {
-        const m = this.m;
-        if (m.isInspecting()) return;
-
-        const worldPt = m.viewport.getWorldCoords(mouseX, mouseY);
-
-        if (m.state === 'DRAWING_WIRE' && m.startNode) {
-            const d = dist(
-                m.startNode.worldX, m.startNode.worldY,
-                worldPt.x, worldPt.y
-            );
-            if (d > 10) {
-                const endNode = m.getHoveredNode(worldPt.x, worldPt.y);
-                if (
-                    endNode &&
-                    endNode !== m.startNode &&
-                    endNode.type !== m.startNode.type
-                ) {
-                    m.finishWire(endNode);
-                    return;
-                }
-                if (m.startNode.type === 'INPUT') {
-                    if (this._tryConnectToWire(worldPt, m.startNode, m.waypoints))
-                        return;
-                }
-            }
-            return;
-        }
-
-        if (
-            ['DRAGGING_WAYPOINT', 'DRAGGING_SEGMENT',
-                'DRAGGING_COMP', 'PANNING'].includes(m.state)
-        ) {
-            m.state = 'IDLE';
-            m.activeWaypointIndex = -1;
-            m.activeElement = null;
         }
     }
 
@@ -223,13 +78,12 @@ export class InputHandler {
             return;
         }
 
-        // Double-click waypoint → remove it
+        // Double-click wire → flip corner
         for (const wire of m.wires) {
-            const wpIdx = wire.getHitWaypointIndex(
-                worldPt.x, worldPt.y, m.viewport.zoom
-            );
-            if (wpIdx !== -1) {
-                wire.removeWaypoint(wpIdx);
+            if (wire.isHit(worldPt.x, worldPt.y, m.viewport.zoom)) {
+                if (typeof wire.flipCorner === 'function') {
+                    wire.flipCorner(worldPt.x, worldPt.y, m.viewport.zoom);
+                }
                 return;
             }
         }
@@ -245,15 +99,218 @@ export class InputHandler {
         }
     }
 
-    handleKeyDown(key, keyCode) {
+    handleMousePress(mx, my) {
         const m = this.m;
         if (m.isInspecting()) {
+            if (mx >= width - 110 && mx <= width - 14 && my >= 8 && my <= 32) {
+                m.drillOut();
+                return;
+            }
+            m.state = 'INSPECTING_PAN';
+            m.viewport.startPan(mx, my);
+            return;
+        }
+
+        const worldPt = m.viewport.getWorldCoords(mx, my);
+        const hitRadius = 10 / m.viewport.zoom;
+
+        if (m.state === 'DRAWING_WIRE') {
+            this._handleWirePress(worldPt, hitRadius);
+            return;
+        }
+
+        // ── Node hit → start drawing ────────────────────────────
+        const node = m.getHoveredNode(worldPt.x, worldPt.y, hitRadius);
+        if (node) {
+            m.state = 'DRAWING_WIRE';
+            m.startNode = node;
+            m.waypoints = [];
+            m.activeElement = null;
+            m.branchParentWire = null;
+            m.branchInsertIndex = -1;
+
+            // Clear selections
+            m.wires.forEach(w => w.isSelected = false);
+            m.selectedWires = [];
+            return;
+        }
+
+        // ── Component hit ───────────────────────────────────────
+        for (let i = m.components.length - 1; i >= 0; i--) {
+            const comp = m.components[i];
+            if (comp.isClockHit && comp.isClockHit(worldPt.x, worldPt.y)) {
+                const nextClk = comp.gate.getClock() === 0 ? 1 : 0;
+                comp.gate.setClock(nextClk);
+                m.cascadeLogic();
+                return;
+            }
+            if (comp.isHit(worldPt.x, worldPt.y)) {
+                // Deselect wires when dragging a component
+                m.wires.forEach(w => w.isSelected = false);
+                m.selectedWires = [];
+
+                m.state = 'DRAGGING_COMP';
+                m.activeElement = comp;
+                m.components.splice(i, 1);
+                m.components.push(comp);
+                comp.dragOffset = {
+                    x: worldPt.x - comp.x,
+                    y: worldPt.y - comp.y,
+                };
+                return;
+            }
+        }
+
+        // ── Wire hit ────────────────────────────────────────────
+        for (const wire of m.wires) {
+            // Waypoint takes priority over segment
+            const wpIdx = wire.getHitWaypointIndex(
+                worldPt.x, worldPt.y, m.viewport.zoom
+            );
+            if (wpIdx !== -1) {
+                // Apply Selection
+                m.wires.forEach(w => w.isSelected = false);
+                wire.isSelected = true;
+                m.selectedWires = [wire];
+
+                m.activeElement = wire;
+                m.activeWaypointIndex = wpIdx;
+                m.state = 'DRAGGING_WAYPOINT';
+                return;
+            }
+
+            const segIdx = wire.getHitSegmentIndex(
+                worldPt.x, worldPt.y, m.viewport.zoom
+            );
+            if (segIdx !== -1) {
+                // Apply Selection
+                m.wires.forEach(w => w.isSelected = false);
+                wire.isSelected = true;
+                m.selectedWires = [wire];
+
+                m.activeElement = wire;
+                m.activeWaypointIndex = segIdx;
+
+                const isMacCmd = keyIsDown(91) || keyIsDown(93) || keyIsDown(224);
+
+                if (keyIsDown(SHIFT)) {
+                    // Shift+click → insert joint and drag it
+                    const newIdx = wire.insertWaypointAt(
+                        worldPt.x, worldPt.y, m.gridSize
+                    );
+                    m.activeWaypointIndex = newIdx;
+                    m.state = 'DRAGGING_WAYPOINT';
+                } else if (keyIsDown(CONTROL) || isMacCmd) {
+                    // Ctrl/Cmd+click → drag segment
+                    m.state = 'DRAGGING_SEGMENT';
+                } else {
+                    // Normal click → Start branching!
+                    const junction = wire.createJunction(worldPt.x, worldPt.y, m.gridSize);
+                    junction.updateLogic();
+
+                    m.state = 'DRAWING_WIRE';
+                    m.startNode = junction;
+                    m.waypoints = [];
+                    m.branchParentWire = wire;
+                    m.branchInsertIndex = segIdx;
+                }
+                return;
+            }
+        }
+
+        // ── Nothing hit → pan & deselect ────────────────────────
+        m.wires.forEach(w => w.isSelected = false);
+        m.selectedWires = [];
+        m.activeElement = null;
+        m.state = 'PANNING';
+        m.viewport.startPan(mx, my);
+    }
+
+    handleMouseRelease() {
+        const m = this.m;
+
+        if (m.state === 'INSPECTING_PAN') {
+            m.state = 'INSPECTING';
+            return;
+        }
+
+        if (m.isInspecting()) return;
+
+        const worldPt = m.viewport.getWorldCoords(mouseX, mouseY);
+
+        if (m.state === 'DRAWING_WIRE' && m.startNode) {
+            const d = dist(
+                m.startNode.worldX, m.startNode.worldY,
+                worldPt.x, worldPt.y
+            );
+
+            let didConnect = false;
+
+            if (d > 10) {
+                const endNode = m.getHoveredNode(worldPt.x, worldPt.y);
+                if (
+                    endNode &&
+                    endNode !== m.startNode &&
+                    endNode.type !== m.startNode.type
+                ) {
+                    m.finishWire(endNode);
+                    didConnect = true;
+                } else if (m.startNode.type === 'INPUT') {
+                    if (this._tryConnectToWire(worldPt, m.startNode, m.waypoints)) {
+                        didConnect = true;
+                    }
+                }
+            }
+
+            // If the user dropped the branch in empty space, clean up the junction
+            if (!didConnect) {
+                if (m.startNode.isJunction) {
+                    const parentWire = m.startNode.parentWire;
+                    parentWire.junctions = parentWire.junctions.filter(j => j !== m.startNode);
+                }
+                m.cancelWireDraw();
+            }
+            return;
+        }
+
+        if (
+            ['DRAGGING_WAYPOINT', 'DRAGGING_SEGMENT',
+                'DRAGGING_COMP', 'PANNING'].includes(m.state)
+        ) {
+            // Apply Orthogonal Cleanup ONLY on drop!
+            if ((m.state === 'DRAGGING_WAYPOINT' || m.state === 'DRAGGING_SEGMENT') && m.activeElement instanceof Wire) {
+                m.activeElement._collapseInPlace(m.gridSize);
+            }
+            else if (m.state === 'DRAGGING_COMP' && m.activeElement) {
+                // Find all wires connected to the dropped component and clean them up
+                for (const wire of m.wires) {
+                    if (wire.startNode.parent === m.activeElement || wire.endNode.parent === m.activeElement) {
+                        wire._collapseInPlace(m.gridSize);
+                    }
+                }
+            }
+
+            m.state = 'IDLE';
+            m.activeWaypointIndex = -1;
+            m.activeElement = null;
+        }
+    }
+
+    handleKeyDown(key, keyCode) {
+        const m = this.m;
+
+        if (m.state === 'INSPECTING_PAN' || m.state === 'INSPECTING') {
             if (key === 'Escape') m.drillOut();
             return;
         }
 
         if (m.state === 'DRAWING_WIRE') {
             if (keyCode === 27 || key === 'Escape') {
+                // Clean up junction if canceled mid-draw
+                if (m.startNode && m.startNode.isJunction) {
+                    const parentWire = m.startNode.parentWire;
+                    parentWire.junctions = parentWire.junctions.filter(j => j !== m.startNode);
+                }
                 m.cancelWireDraw();
                 return;
             }
@@ -280,6 +337,8 @@ export class InputHandler {
             }
             if (m.state === 'DRAWING_WIRE') m.cancelWireDraw();
             m.activeElement = null;
+            m.wires.forEach(w => w.isSelected = false);
+            m.selectedWires = [];
         } else if (key === 'Backspace' || key === 'Delete') {
             this._handleDelete();
         }
@@ -321,7 +380,7 @@ export class InputHandler {
             const outNode = targetWire.startNode;
 
             const insertIndex = targetWire.insertWaypointAt(
-                snappedX, snappedY, m.gridSize
+                snappedX, snappedY, m.gridSize, true
             );
             const parentPath = targetWire.waypoints.slice(0, insertIndex + 1);
             const drawnPath = [...waypoints].reverse();
@@ -339,14 +398,20 @@ export class InputHandler {
 
     _handleDelete() {
         const m = this.m;
-        if (!m.activeElement) return;
 
-        if (m.activeElement instanceof Wire) {
-            m.activeElement.endNode.value = 0;
-            if (m.activeElement.endNode.parent)
-                m.activeElement.endNode.parent.updateLogic();
-            m.wires = m.wires.filter(w => w !== m.activeElement);
-        } else {
+        // 1. Delete selected wires
+        if (m.selectedWires && m.selectedWires.length > 0) {
+            for (const wire of m.selectedWires) {
+                wire.endNode.value = 0;
+                if (wire.endNode.parent) wire.endNode.parent.updateLogic();
+                m.wires = m.wires.filter(w => w !== wire);
+            }
+            m.selectedWires = [];
+            return;
+        }
+
+        // 2. Delete selected component
+        if (m.activeElement && !(m.activeElement instanceof Wire)) {
             m.wires
                 .filter(w => w.startNode.parent === m.activeElement)
                 .forEach(w => {
@@ -359,7 +424,7 @@ export class InputHandler {
                     w.startNode.parent !== m.activeElement &&
                     w.endNode.parent !== m.activeElement
             );
+            m.activeElement = null;
         }
-        m.activeElement = null;
     }
 }
