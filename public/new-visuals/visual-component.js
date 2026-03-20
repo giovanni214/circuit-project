@@ -1,3 +1,5 @@
+// File: public/new-visuals/visual-component.js
+
 import { Node } from "./node.js";
 
 export class VisualComponent {
@@ -15,59 +17,73 @@ export class VisualComponent {
     this.inputNodes = [];
     this.outputNodes = [];
 
+    // Must be set externally via setCircuitManager()
+    this._circuitManager = null;
+
     this.setupNodes();
     this.updateNodes();
   }
 
+  // ── Called by CircuitManager.addComponent() after construction ──
+  setCircuitManager(cm) {
+    this._circuitManager = cm;
+  }
+
   setupNodes() {
     if (this.type === "CIRCUIT" && this.gate) {
-      const maxPins = Math.max(this.gate.inputLength, this.gate.outputLength);
-      let pinSpacing = this.gridSize * 2;
+      const maxPins = Math.max(
+        this.gate.inputLength,
+        this.gate.outputLength
+      );
+      const pinSpacing = this.gridSize * 2;
 
-      // 1. Ensure enough vertical space for Title, Pins, and Clock
-      let headerPadding = 30;
-      let footerPadding = (typeof this.gate.clock !== "undefined") ? 30 : 15;
+      const headerPadding = 30;
+      const footerPadding =
+        typeof this.gate.clock !== "undefined" ? 30 : 15;
 
       this.height = Math.max(
         this.gridSize * 5,
         (maxPins - 1) * pinSpacing + headerPadding + footerPadding
       );
 
-      // 2. Better Dynamic Width Calculation
-      let titleLen = this.gate.name ? this.gate.name.length : 0;
+      const titleLen = this.gate.name ? this.gate.name.length : 0;
       let maxOutLen = 0;
       if (this.gate.rootNodes) {
         for (let i = 0; i < this.gate.outputLength; i++) {
-          let rn = this.gate.rootNodes[i];
-          let lbl = rn && rn.name ? rn.name : `OUT${i}`;
+          const rn = this.gate.rootNodes[i];
+          const lbl = rn && rn.name ? rn.name : `OUT${i}`;
           if (lbl.length > maxOutLen) maxOutLen = lbl.length;
         }
       }
 
-      // Width needs to clear either the top title OR the side-by-side labels
-      let requiredCharsWidth = Math.max(titleLen, 4 + maxOutLen + 4);
-      let estimatedTextWidth = requiredCharsWidth * 8 + 40;
-      let minWidth = this.gridSize * 6;
+      const requiredCharsWidth = Math.max(titleLen, 4 + maxOutLen + 4);
+      const estimatedTextWidth = requiredCharsWidth * 8 + 40;
+      const minWidth = this.gridSize * 6;
 
       this.width = Math.max(
         minWidth,
-        Math.ceil(estimatedTextWidth / this.gridSize) * this.gridSize,
+        Math.ceil(estimatedTextWidth / this.gridSize) * this.gridSize
       );
 
-      // 3. Shift pins down slightly so they live in the "pin area" below the title
-      let pinCenterOffsetY = (headerPadding - footerPadding) / 2;
+      const pinCenterOffsetY = (headerPadding - footerPadding) / 2;
 
-      let inStartY = -((this.gate.inputLength - 1) * pinSpacing) / 2 + pinCenterOffsetY;
+      const inStartY =
+        -((this.gate.inputLength - 1) * pinSpacing) / 2 +
+        pinCenterOffsetY;
       for (let i = 0; i < this.gate.inputLength; i++) {
-        let offsetY = inStartY + i * pinSpacing;
-        this.inputNodes.push(new Node(this, -this.width / 2, offsetY, "INPUT"));
+        const offsetY = inStartY + i * pinSpacing;
+        this.inputNodes.push(
+          new Node(this, -this.width / 2, offsetY, "INPUT")
+        );
       }
 
-      let outStartY = -((this.gate.outputLength - 1) * pinSpacing) / 2 + pinCenterOffsetY;
+      const outStartY =
+        -((this.gate.outputLength - 1) * pinSpacing) / 2 +
+        pinCenterOffsetY;
       for (let i = 0; i < this.gate.outputLength; i++) {
-        let offsetY = outStartY + i * pinSpacing;
+        const offsetY = outStartY + i * pinSpacing;
         this.outputNodes.push(
-          new Node(this, this.width / 2, offsetY, "OUTPUT"),
+          new Node(this, this.width / 2, offsetY, "OUTPUT")
         );
       }
     } else if (this.type === "INPUT") {
@@ -80,9 +96,21 @@ export class VisualComponent {
       this.inputNodes.push(new Node(this, -this.width / 2, 0, "INPUT"));
     }
   }
+
   updateNodes() {
-    for (let node of [...this.inputNodes, ...this.outputNodes]) {
+    for (const node of [...this.inputNodes, ...this.outputNodes]) {
       node.updateWorldPosition();
+    }
+
+    if (this._circuitManager) {
+      for (const wire of this._circuitManager.wires) {
+        if (
+          wire.startNode.parent === this ||
+          wire.endNode.parent === this
+        ) {
+          wire.updateEndpoints(this.gridSize);
+        }
+      }
     }
   }
 
@@ -94,9 +122,8 @@ export class VisualComponent {
 
   updateLogic() {
     if (this.type === "CIRCUIT" && this.gate) {
-      let inValues = this.inputNodes.map((n) => n.value || 0);
-      let outValues = this.gate.tick(inValues);
-
+      const inValues = this.inputNodes.map((n) => n.value || 0);
+      const outValues = this.gate.tick(inValues);
       this.outputNodes.forEach((n, i) => {
         n.value = outValues[i] || 0;
       });
@@ -113,10 +140,13 @@ export class VisualComponent {
       this.gate &&
       typeof this.gate.clock !== "undefined"
     ) {
-      let btnX = this.x;
-      let btnY = this.y + this.height / 2 - 12;
+      const btnX = this.x;
+      const btnY = this.y + this.height / 2 - 12;
       return (
-        wx >= btnX - 30 && wx <= btnX + 30 && wy >= btnY - 10 && wy <= btnY + 10
+        wx >= btnX - 30 &&
+        wx <= btnX + 30 &&
+        wy >= btnY - 10 &&
+        wy <= btnY + 10
       );
     }
     return false;
@@ -131,9 +161,11 @@ export class VisualComponent {
     );
   }
 
-  getNodeAt(worldX, worldY, zoom) {
-    const hitRadius = 12 / zoom;
-    for (let node of [...this.inputNodes, ...this.outputNodes]) {
+  // FIX: accepts radiusOverride so CircuitManager.getHoveredNode works
+  getNodeAt(worldX, worldY, zoom, radiusOverride = null) {
+    const hitRadius =
+      radiusOverride != null ? radiusOverride : 12 / zoom;
+    for (const node of [...this.inputNodes, ...this.outputNodes]) {
       if (dist(worldX, worldY, node.worldX, node.worldY) <= hitRadius) {
         return node;
       }
@@ -167,55 +199,58 @@ export class VisualComponent {
     textAlign(CENTER, CENTER);
 
     if (this.type === "CIRCUIT" && this.gate) {
-      // Dynamic scaling for Title
-      let defaultTitleSize = 12;
+      // Title
+      const defaultTitleSize = 12;
       textSize(defaultTitleSize);
-      let titleTw = textWidth(`${this.gate.name}`);
-      let maxTitleWidth = this.width - 10;
+      const titleTw = textWidth(`${this.gate.name}`);
+      const maxTitleWidth = this.width - 10;
       if (titleTw > maxTitleWidth) {
-        textSize(Math.max(6, defaultTitleSize * (maxTitleWidth / titleTw)));
+        textSize(
+          Math.max(6, defaultTitleSize * (maxTitleWidth / titleTw))
+        );
       }
       text(`${this.gate.name}`, 0, -this.height / 2 + 15);
 
-      // Output Labels
+      // Output labels
       textAlign(RIGHT, CENTER);
       for (let i = 0; i < this.outputNodes.length; i++) {
-        let n = this.outputNodes[i];
-        let rootNode = this.gate.rootNodes[i];
-        let lbl = rootNode && rootNode.name ? rootNode.name : `OUT${i}`;
+        const n = this.outputNodes[i];
+        const rootNode = this.gate.rootNodes[i];
+        const lbl = rootNode && rootNode.name ? rootNode.name : `OUT${i}`;
         fill(0);
-
-        let defaultLblSize = 12;
+        const defaultLblSize = 12;
         textSize(defaultLblSize);
-        let lblTw = textWidth(lbl);
-        let maxLblWidth = (this.width / 2) - 12;
+        const lblTw = textWidth(lbl);
+        const maxLblWidth = this.width / 2 - 12;
         if (lblTw > maxLblWidth) {
-          textSize(Math.max(5, defaultLblSize * (maxLblWidth / lblTw)));
+          textSize(
+            Math.max(5, defaultLblSize * (maxLblWidth / lblTw))
+          );
         }
         text(lbl, this.width / 2 - 8, n.offsetY);
       }
 
-      // Input Labels
+      // Input labels
       textAlign(LEFT, CENTER);
       for (let i = 0; i < this.inputNodes.length; i++) {
-        let n = this.inputNodes[i];
-        let lbl = `IN${i}`;
+        const n = this.inputNodes[i];
+        const lbl = `IN${i}`;
         fill(0);
-
-        let defaultLblSize = 12;
+        const defaultLblSize = 12;
         textSize(defaultLblSize);
-        let lblTw = textWidth(lbl);
-        let maxLblWidth = (this.width / 2) - 12;
+        const lblTw = textWidth(lbl);
+        const maxLblWidth = this.width / 2 - 12;
         if (lblTw > maxLblWidth) {
-          textSize(Math.max(5, defaultLblSize * (maxLblWidth / lblTw)));
+          textSize(
+            Math.max(5, defaultLblSize * (maxLblWidth / lblTw))
+          );
         }
         text(lbl, -this.width / 2 + 8, n.offsetY);
       }
 
-      // Clock
+      // Clock button
       if (typeof this.gate.clock !== "undefined") {
-        let clk = this.gate.clock;
-
+        const clk = this.gate.clock;
         fill("#f5f5f5");
         stroke(200);
         strokeWeight(1);
@@ -226,30 +261,35 @@ export class VisualComponent {
         noStroke();
         textAlign(CENTER, CENTER);
 
-        let clkText = clk === 1 ? "CLK: ↑" : "CLK: ↓";
-        let defaultClkSize = 12;
+        const clkText = clk === 1 ? "CLK: ↑" : "CLK: ↓";
+        const defaultClkSize = 12;
         textSize(defaultClkSize);
-        let clkTw = textWidth(clkText);
+        const clkTw = textWidth(clkText);
         if (clkTw > 50) {
           textSize(Math.max(6, defaultClkSize * (50 / clkTw)));
         }
         text(clkText, 0, this.height / 2 - 12);
       }
     } else {
-      let valText = this.type === "INPUT" ? `IN: ${this.value}` : `OUT: ${this.value}`;
-      let defaultValSize = 14;
+      const valText =
+        this.type === "INPUT"
+          ? `IN: ${this.value}`
+          : `OUT: ${this.value}`;
+      const defaultValSize = 14;
       textSize(defaultValSize);
-      let valTw = textWidth(valText);
-      let maxValWidth = this.width - 10;
+      const valTw = textWidth(valText);
+      const maxValWidth = this.width - 10;
       if (valTw > maxValWidth) {
-        textSize(Math.max(6, defaultValSize * (maxValWidth / valTw)));
+        textSize(
+          Math.max(6, defaultValSize * (maxValWidth / valTw))
+        );
       }
       text(valText, 0, 0);
     }
 
     pop();
 
-    for (let node of [...this.inputNodes, ...this.outputNodes]) {
+    for (const node of [...this.inputNodes, ...this.outputNodes]) {
       node.draw();
     }
   }
