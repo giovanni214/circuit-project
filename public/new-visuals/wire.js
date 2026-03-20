@@ -1,21 +1,7 @@
 // File: public/new-visuals/wire.js
 
+import { JunctionNode } from "./junction-node.js";
 // Lightweight inline JunctionNode to avoid import dependency issues
-export class JunctionNode {
-    constructor(parentWire, x, y) {
-        this.parentWire = parentWire;
-        this.worldX = x;
-        this.worldY = y;
-        this.type = 'OUTPUT';
-        this.value = 0;
-        this.parent = null;
-        this.isJunction = true;
-    }
-
-    updateLogic() {
-        this.value = this.parentWire.startNode ? this.parentWire.startNode.value : 0;
-    }
-}
 
 export class Wire {
     constructor(outNode, inNode, waypoints = null) {

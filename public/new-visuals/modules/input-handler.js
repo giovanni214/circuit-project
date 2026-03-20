@@ -141,7 +141,6 @@ export class InputHandler {
             if (comp.isClockHit && comp.isClockHit(worldPt.x, worldPt.y)) {
                 const nextClk = comp.gate.getClock() === 0 ? 1 : 0;
                 comp.gate.setClock(nextClk);
-                m.cascadeLogic();
                 return;
             }
             if (comp.isHit(worldPt.x, worldPt.y)) {
