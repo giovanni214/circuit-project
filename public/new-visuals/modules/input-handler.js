@@ -57,12 +57,64 @@ export class InputHandler {
             return;
         }
 
+        const worldPt = m.viewport.getWorldCoords(mx, my);
+
         if (m.state === 'DRAWING_WIRE') {
-            m.cancelWireDraw();
+            // Double click empty space to finalize dangling wire
+            const endNode = { worldX: m.snap(worldPt.x), worldY: m.snap(worldPt.y), isDangling: true };
+            m.finishWire(endNode);
             return;
         }
 
-        const worldPt = m.viewport.getWorldCoords(mx, my);
+        if (m.state === 'IDLE' || m.state === 'PANNING') {
+            // Allow double click in empty space to start a wire
+            const hitNode = m.getHoveredNode(worldPt.x, worldPt.y);
+            const hitComp = m.components.some(c => c.isHit(worldPt.x, worldPt.y));
+            const hitWire = m.wires.some(w => w.isHit(worldPt.x, worldPt.y, m.viewport.zoom));
+
+            if (!hitNode && !hitComp && !hitWire) {
+                m.state = 'DRAWING_WIRE';
+                m.startNode = { worldX: m.snap(worldPt.x), worldY: m.snap(worldPt.y), isDangling: true };
+                m.waypoints = [];
+                return;
+            }
+        }
+
+        // --- NEW: Check for double-click on dangling endpoints to resume drawing ---
+        for (let i = 0; i < m.wires.length; i++) {
+            const wire = m.wires[i];
+            const wpIdx = wire.getHitWaypointIndex(worldPt.x, worldPt.y, m.viewport.zoom);
+
+            if (wpIdx === 'START' || wpIdx === 'END') {
+                m.wires.splice(i, 1); // Remove the wire from the array, we are taking it over
+
+                m.state = 'DRAWING_WIRE';
+                if (wpIdx === 'END') {
+                    m.startNode = wire.startNode;
+                    m.waypoints = [...wire.waypoints];
+                } else {
+                    m.startNode = wire.endNode;
+                    // Reverse the waypoints so we draw backwards towards the start smoothly
+                    m.waypoints = [...wire.waypoints].reverse();
+                }
+
+                // Clear selection states
+                m.activeElement = null;
+                m.selectedWires = [];
+                m.wires.forEach(w => w.isSelected = false);
+                return;
+            }
+        }
+
+        // Double-click wire → flip corner
+        for (const wire of m.wires) {
+            if (wire.isHit(worldPt.x, worldPt.y, m.viewport.zoom)) {
+                if (typeof wire.flipCorner === 'function') {
+                    wire.flipCorner(worldPt.x, worldPt.y, m.viewport.zoom);
+                }
+                return;
+            }
+        }
 
         if (m.isInspecting()) {
             if (m.inspectorScene) {
@@ -261,14 +313,8 @@ export class InputHandler {
                 }
             }
 
-            // If the user dropped the branch in empty space, clean up the junction
-            if (!didConnect) {
-                if (m.startNode.isJunction) {
-                    const parentWire = m.startNode.parentWire;
-                    parentWire.junctions = parentWire.junctions.filter(j => j !== m.startNode);
-                }
-                m.cancelWireDraw();
-            }
+            // Do NOT cancel the wire here if dropped in empty space. 
+            // Allows click-drawing workflow where releasing mouse continues the route.
             return;
         }
 
@@ -278,7 +324,88 @@ export class InputHandler {
         ) {
             // Apply Orthogonal Cleanup ONLY on drop!
             if ((m.state === 'DRAGGING_WAYPOINT' || m.state === 'DRAGGING_SEGMENT') && m.activeElement instanceof Wire) {
-                m.activeElement._collapseInPlace(m.gridSize);
+                const wire = m.activeElement;
+
+                // --- NEW: Snap and Connect Dangling Ends ---
+                if (m.state === 'DRAGGING_WAYPOINT' && (m.activeWaypointIndex === 'START' || m.activeWaypointIndex === 'END')) {
+                    const idx = m.activeWaypointIndex;
+                    const dropX = m.snap(worldPt.x);
+                    const dropY = m.snap(worldPt.y);
+
+                    const hitNode = m.getHoveredNode(dropX, dropY);
+                    let didConnect = false;
+
+                    if (hitNode) {
+                        let isValid = true;
+
+                        // Start nodes connect to Outputs/Junctions. End nodes connect to Inputs.
+                        if (idx === 'START' && hitNode.type === 'INPUT') {
+                            alert("The start of a wire must connect to an output pin or junction.");
+                            isValid = false;
+                        } else if (idx === 'END' && hitNode.type === 'OUTPUT') {
+                            alert("The end of a wire must connect to an input pin.");
+                            isValid = false;
+                        }
+
+                        // Prevent over-driving an input
+                        if (isValid && !hitNode.isJunction && hitNode.type === 'INPUT') {
+                            const alreadyDriven = m.wires.some(w => w !== wire && w.endNode === hitNode);
+                            if (alreadyDriven) {
+                                alert('This input is already driven by another output.');
+                                isValid = false;
+                            }
+                        }
+
+                        if (isValid) {
+                            if (idx === 'START') wire.startNode = hitNode;
+                            else wire.endNode = hitNode;
+                            didConnect = true;
+                        }
+                    } else {
+                        // Check for wire hit to create junction
+                        for (const targetWire of m.wires) {
+                            if (targetWire !== wire && targetWire.isHit(dropX, dropY, m.viewport.zoom)) {
+
+                                // Check if we hit a dangling start/end of the target wire perfectly
+                                const hitDanglingStart = targetWire.startNode.isDangling && dist(dropX, dropY, targetWire.startNode.worldX, targetWire.startNode.worldY) < 1;
+                                const hitDanglingEnd = targetWire.endNode.isDangling && dist(dropX, dropY, targetWire.endNode.worldX, targetWire.endNode.worldY) < 1;
+
+                                if (idx === 'START') {
+                                    // Valid: Branching off an existing wire
+                                    const junction = targetWire.createJunction(dropX, dropY, m.gridSize);
+                                    junction.updateLogic();
+                                    wire.startNode = junction;
+                                    didConnect = true;
+
+                                    // Clean up target wire's dangling ends if we perfectly overlapped them!
+                                    if (hitDanglingStart) targetWire.startNode = junction;
+                                    if (hitDanglingEnd) targetWire.endNode = junction;
+
+                                } else if (idx === 'END') {
+                                    // Valid ONLY if connecting into a target wire's unconnected start
+                                    if (hitDanglingStart) {
+                                        const junction = targetWire.createJunction(dropX, dropY, m.gridSize);
+                                        junction.updateLogic();
+                                        wire.endNode = junction;
+                                        targetWire.startNode = junction;
+                                        didConnect = true;
+                                    } else {
+                                        // Invalid: Trying to push a signal into an already driven wire
+                                        alert('You cannot plug the end of a wire into an existing wire unless you are connecting it to its unconnected start.');
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if (didConnect) {
+                        wire.propagate();
+                        if (wire.endNode && wire.endNode.parent) wire.endNode.parent.updateLogic();
+                    }
+                }
+
+                wire._collapseInPlace(m.gridSize);
             }
             else if (m.state === 'DRAGGING_COMP' && m.activeElement) {
                 // Find all wires connected to the dropped component and clean them up
@@ -308,7 +435,7 @@ export class InputHandler {
                 // Clean up junction if canceled mid-draw
                 if (m.startNode && m.startNode.isJunction) {
                     const parentWire = m.startNode.parentWire;
-                    parentWire.junctions = parentWire.junctions.filter(j => j !== m.startNode);
+                    if (parentWire) parentWire.junctions = parentWire.junctions.filter(j => j !== m.startNode);
                 }
                 m.cancelWireDraw();
                 return;
@@ -357,10 +484,11 @@ export class InputHandler {
             return;
         }
         if (!node) {
-            if (m.startNode.type === 'INPUT') {
+            if (m.startNode && m.startNode.type === 'INPUT') {
                 if (this._tryConnectToWire(worldPt, m.startNode, m.waypoints))
                     return;
             }
+            // User clicked empty space while drawing; place a waypoint natively.
             m.waypoints.push({
                 x: m.snap(worldPt.x),
                 y: m.snap(worldPt.y),
@@ -401,8 +529,8 @@ export class InputHandler {
         // 1. Delete selected wires
         if (m.selectedWires && m.selectedWires.length > 0) {
             for (const wire of m.selectedWires) {
-                wire.endNode.value = 0;
-                if (wire.endNode.parent) wire.endNode.parent.updateLogic();
+                if (wire.endNode && !wire.endNode.isDangling) wire.endNode.value = 0;
+                if (wire.endNode && wire.endNode.parent) wire.endNode.parent.updateLogic();
                 m.wires = m.wires.filter(w => w !== wire);
             }
             m.selectedWires = [];
@@ -414,8 +542,8 @@ export class InputHandler {
             m.wires
                 .filter(w => w.startNode.parent === m.activeElement)
                 .forEach(w => {
-                    w.endNode.value = 0;
-                    if (w.endNode.parent) w.endNode.parent.updateLogic();
+                    if (w.endNode && !w.endNode.isDangling) w.endNode.value = 0;
+                    if (w.endNode && w.endNode.parent) w.endNode.parent.updateLogic();
                 });
             m.components = m.components.filter(c => c !== m.activeElement);
             m.wires = m.wires.filter(

@@ -21,8 +21,52 @@ export class CircuitRenderer {
         for (const comp of m.components)
             comp.draw(font, m.activeElement === comp);
 
+        // Replace the Overlap Detection Setup section inside draw() with this:
+
+        // --- Overlap Detection Setup ---
+        const overlapChunks = new Map();
+        const overlapWaypoints = new Map(); // Add waypoint tracker
+        const getChunkKey = (x, y, isHoriz) => `${x},${y},${isHoriz ? 'H' : 'V'}`;
+
+        for (const wire of m.wires) {
+            const pts = wire.getPoints();
+            for (let i = 0; i < pts.length - 1; i++) {
+                const x1 = pts[i].x, y1 = pts[i].y;
+                const x2 = pts[i + 1].x, y2 = pts[i + 1].y;
+                if (Math.abs(y1 - y2) < 0.5) {
+                    const startX = Math.min(x1, x2);
+                    const endX = Math.max(x1, x2);
+                    for (let x = startX; x < endX; x += m.gridSize) {
+                        const key = getChunkKey(x, y1, true);
+                        overlapChunks.set(key, (overlapChunks.get(key) || 0) + 1);
+                    }
+                } else if (Math.abs(x1 - x2) < 0.5) {
+                    const startY = Math.min(y1, y2);
+                    const endY = Math.max(y1, y2);
+                    for (let y = startY; y < endY; y += m.gridSize) {
+                        const key = getChunkKey(x1, y, false);
+                        overlapChunks.set(key, (overlapChunks.get(key) || 0) + 1);
+                    }
+                }
+            }
+
+            // Tally waypoint overlaps (including dangling ends)
+            for (const wp of wire.waypoints) {
+                const key = `${wp.x},${wp.y}`;
+                overlapWaypoints.set(key, (overlapWaypoints.get(key) || 0) + 1);
+            }
+            if (wire.startNode.isDangling) {
+                const key = `${wire.startNode.worldX},${wire.startNode.worldY}`;
+                overlapWaypoints.set(key, (overlapWaypoints.get(key) || 0) + 1);
+            }
+            if (wire.endNode.isDangling) {
+                const key = `${wire.endNode.worldX},${wire.endNode.worldY}`;
+                overlapWaypoints.set(key, (overlapWaypoints.get(key) || 0) + 1);
+            }
+        }
+
         for (const wire of m.wires)
-            wire.draw(m.activeElement === wire);
+            wire.draw(m.activeElement === wire, overlapChunks, overlapWaypoints, m.gridSize); // Pass overlapWaypoints
 
         if (m.state === 'DRAWING_WIRE' && m.startNode) {
             const worldMouse = m.viewport.getWorldCoords(mouseX, mouseY);
