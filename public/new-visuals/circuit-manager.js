@@ -7,6 +7,7 @@ import { InputHandler } from './modules/input-handler.js';
 import { SimulationRunner } from './modules/simulation-runner.js';
 import { Serializer } from './modules/serializer.js';
 import { CircuitRenderer } from './modules/circuit-renderer.js';
+import { Sidebar } from './modules/sidebar.js'; // NEW
 
 export class CircuitManager {
     constructor() {
@@ -30,6 +31,7 @@ export class CircuitManager {
         this.inspectorScene = null;
         this.inspectorCircuitName = '';
 
+        this.sidebar = new Sidebar(this); // NEW
         this._scene = new SceneManager(this);
         this._wire = new WireHandler(this);
         this._input = new InputHandler(this);

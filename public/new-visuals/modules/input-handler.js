@@ -153,6 +153,10 @@ export class InputHandler {
 
     handleMousePress(mx, my) {
         const m = this.m;
+        if (m.sidebar && m.sidebar.checkHit(mx, my)) {
+            return; // Stop processing. The UI handled it!
+        }
+
         if (m.isInspecting()) {
             if (mx >= width - 110 && mx <= width - 14 && my >= 8 && my <= 32) {
                 m.drillOut();
@@ -279,6 +283,23 @@ export class InputHandler {
 
     handleMouseRelease() {
         const m = this.m;
+
+        // --- NEW: Drop new component from sidebar ---
+        if (m.state === 'DRAGGING_NEW_COMP' && m.draggedItemInfo) {
+            const worldPt = m.viewport.getWorldCoords(mouseX, mouseY);
+            const snappedX = m.snap(worldPt.x);
+            const snappedY = m.snap(worldPt.y);
+
+            // You will need to call whatever function actually creates your components here.
+            // Example assuming you have a factory or addComponent function:
+            // m.addComponent(m.draggedItemInfo.type, snappedX, snappedY);
+            m.addComponent(m.draggedItemInfo.type, snappedX, snappedY);
+            console.log(`Dropped a ${m.draggedItemInfo.type} at ${snappedX}, ${snappedY}`);
+
+            m.state = 'IDLE';
+            m.draggedItemInfo = null;
+            return;
+        }
 
         if (m.state === 'INSPECTING_PAN') {
             m.state = 'INSPECTING';

@@ -100,6 +100,11 @@ export class CircuitRenderer {
 
         if (m.inspectedComponent) this.drawStatePopup(font);
         this._drawHUD(font);
+
+        // --- NEW: Draw Sidebar UI on top of everything ---
+        if (m.sidebar) {
+            m.sidebar.draw(font);
+        }
     }
 
     _drawInspector(font) {
